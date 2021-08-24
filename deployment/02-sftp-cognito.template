@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: (SO0103-cognito) %%SOLUTION_NAME%% - Deploys a Cognito Stack for %%SOLUTION_NAME%%
+
+# TODO: still had to go into console and manually check the "Cognito User Pool" check box to enable identity provider in
+# App Integration --> App Client Settings.
+
+Parameters:
+    VPCResourceStack:
+        Type: String
+        MinLength: 1
+        MaxLength: 255
+        AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+        Default: sftp-vpc-stack
+
+Resources:
+    UserPool:
+        Type: "AWS::Cognito::UserPool"
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    - id: F78
+                      reason: "User management will be done by administrator and SFTP Web Client application does not support MFA"
+        Properties:
+            UserPoolName:
+                Fn::Join:
+                - "-"
+                - - "sftp-backend-user-pool"
+                  - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+            MfaConfiguration: "OFF"
+            Schema:
+                - Name: email
+                  AttributeDataType: String
+                  Mutable: false
+                  Required: true
+            Policies:
+                PasswordPolicy:
+                    MinimumLength: 8
+                    RequireLowercase: true
+                    RequireNumbers: true
+                    RequireSymbols: true
+                    RequireUppercase: true
+
+    # Creates a User Pool Client to be used by the identity pool
+    UserPoolClientWeb:
+        Type: "AWS::Cognito::UserPoolClient"
+        Properties:
+            ClientName:
+                Fn::Join:
+                - "-"
+                - - "sftp-backend-cognitoclient"
+                  - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+            GenerateSecret: true
+            RefreshTokenValidity: 1
+            UserPoolId: !Ref UserPool
+            AllowedOAuthFlows:
+              - implicit
+            AllowedOAuthScopes:
+              - email
+              - openid
+            CallbackURLs:
+                - https://www.amazon.com
+            ExplicitAuthFlows:
+                - ALLOW_ADMIN_USER_PASSWORD_AUTH
+                - ALLOW_USER_PASSWORD_AUTH
+                - ALLOW_REFRESH_TOKEN_AUTH
+                - ALLOW_USER_SRP_AUTH
+        DependsOn: UserPool
+
+
+Outputs:
+    UserPoolId:
+        Value: !Ref UserPool
+        Export:
+            Name: !Sub "${AWS::StackName}:UserPoolId"
+    UserPoolArn:
+        Value: !GetAtt UserPool.Arn
+        Export:
+            Name: !Sub "${AWS::StackName}:UserPoolArn"
+    UserPoolClientId:
+        Value: !Ref UserPoolClientWeb
+        Export:
+            Name: !Sub "${AWS::StackName}:UserPoolClientId"

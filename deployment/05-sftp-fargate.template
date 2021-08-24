@@ -1,0 +1,314 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: (SO0103-fargate) %%SOLUTION_NAME%% -Deploys SFTP web client backend service on AWS Fargate, hosted in a private subnet, but accessible via a public load balancer.
+Parameters:
+
+  ACMCertificateARN:
+    Type: String
+    Description: ACM Certificate ARN that will be associated with the public-facing load-balancer
+
+  ECSStackName:
+    Type: String
+    Description: The name of the parent ECS Fargate networking stack that you created. Necessary
+                 to locate and reference resources created by that stack.
+    Default: sftp-ecs-stack
+
+  SFTPEndPointStackName:
+    Type: String
+    Description: The name of the SFTP Endpoint stack that you created. Necessary
+                 to locate and reference resources created by that stack.
+    Default: sftp-endpoint-stack
+
+  VPCResourceStack:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: sftp-vpc-stack
+
+  ImageURI:
+    Type: String
+    Default: <Insert-ECR-Image-URI>
+    Description: The ECR Image URI for the application.
+    
+  ContainerPort:
+    Type: Number
+    Default: 80
+    Description: What port number the application inside the docker container is binding to
+
+  # TODO: kap changes this to 1024; had to revert as cfn failed to deploy with this setting.
+  ContainerCPU:
+    Type: Number
+    Default: 256
+    Description: How much CPU to give the container. 1024 is 1 CPU
+
+  ContainerMemory:
+    Type: Number
+    Default: 512
+    Description: How much memory in megabytes to give the container
+
+  TaskCount:
+    Type: Number
+    Default: 3
+    Description: How many copies of the service task to run
+
+Resources:
+  # CloudWatch Log Group for ECS logging
+  SFTPCloudWatchLogGroup:
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: "No sensitive data being logged by the solution. KMS encryption of logs left on customers to configure, if required."
+    Properties:
+      LogGroupName:
+        Fn::Join:
+        - "-"
+        - - "/ecs/sftp-ecs-logs"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+
+      RetentionInDays: 30
+
+  # Various Parameters to be passed to ECS Task
+  TransferVPCEndpointDNSEntry:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Description: Private DNS entry from the Transfer VPC endpoint. This will be used by the application running in Private subnet to interact with AWS Transfer endpoint.
+      Name:
+        Fn::Join:
+        - "-"
+        - - "sftpui-TransferVPCEndpointDNSEntry"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Value:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'SFTPEndPointStackName', 'TransferVPCEndpointDNSEntry']]
+
+  KMSKeyID:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Description: ID of KMS Key that is used to encrypt/decrypt SFTP JWT.
+      Name:
+        Fn::Join:
+        - "-"
+        - - "sftpui-KMSKeyID"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Value:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ECSStackName', 'KMSKeyID']]
+
+  GunicornWorkers:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Type: String
+      Description: Number of Gunicorn workers.
+      Name:
+        Fn::Join:
+        - "-"
+        - - "sftpui-GunicornWorkers"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Value: 2
+
+  # The task definition. This is a simple metadata description of what
+  # container to run, and what resource requirements it has.
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family:
+        Fn::Join:
+        - "-"
+        - - "sftp-web-client-service"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Cpu: !Ref 'ContainerCPU'
+      Memory: !Ref 'ContainerMemory'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ECSStackName', 'ECSTaskExecutionRole']]
+      TaskRoleArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ECSStackName', 'ECSTaskRole']]
+      Volumes:
+        - Name: sftp-download-scratch-space
+          Host: {}
+        - Name: sftp-upload-scratch-space
+          Host: {}
+      ContainerDefinitions:
+        - Name:
+            Fn::Join:
+            - "-"
+            - - "sftp-web-client-service"
+              - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+          Cpu: !Ref 'ContainerCPU'
+          Memory: !Ref 'ContainerMemory'
+          Image: !Ref 'ImageURI'
+          Secrets:
+           - Name: sftp_hostname
+             ValueFrom: !Ref TransferVPCEndpointDNSEntry
+           - Name: kms_key_id
+             ValueFrom: !Ref KMSKeyID
+           - Name: jwt_secret_key_parameter_value
+             ValueFrom: !Join ['-', ['sftpui-JWTSecretKey', Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']] ]]
+           - Name: workers
+             ValueFrom: !Ref GunicornWorkers
+
+          MountPoints:
+            - SourceVolume: sftp-download-scratch-space
+              ContainerPath: /var/sftp-download-scratch-space
+            - SourceVolume: sftp-upload-scratch-space
+              ContainerPath: /var/sftp-upload-scratch-space
+          PortMappings:
+            - ContainerPort: !Ref 'ContainerPort'
+          LogConfiguration:
+            LogDriver: 'awslogs'
+            Options:
+              awslogs-group: !Ref 'SFTPCloudWatchLogGroup'
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: 'sftp'
+
+  # The service. The service is a resource which allows you to run multiple
+  # copies of a type of task, and gather up their logs and metrics, as well
+  # as monitor the number of running tasks and replace any that have crashed
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: PublicLoadBalancerListener
+    Properties:
+      ServiceName:
+        Fn::Join:
+        - "-"
+        - - "sftp-web-client-service"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Cluster:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ECSStackName', 'ClusterName']]
+      LaunchType: FARGATE
+      PlatformVersion: 1.4.0 #This is required to use 20GB of ephemeral storage for each fargate task.
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref 'TaskCount'
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'ECSStackName', 'FargateContainerSecurityGroup']]
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'SFTPEndPointStackName', 'AWSTransferVPCSecGroup']]
+          Subnets:
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'VPCResourceStack', 'PrivateSubnet1']]
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'VPCResourceStack', 'PrivateSubnet2']]
+            - Fn::ImportValue:
+                !Join [':', [!Ref 'VPCResourceStack', 'PrivateSubnet3']]
+      TaskDefinition: !Ref 'TaskDefinition'
+      LoadBalancers:
+        - ContainerName:
+            Fn::Join:
+            - "-"
+            - - "sftp-web-client-service"
+              - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+          ContainerPort: !Ref 'ContainerPort'
+          TargetGroupArn: !Ref 'TargetGroup'
+
+  # A target group. This is used for keeping track of all the tasks, and
+  # what IP addresses / port numbers they have. You can query it yourself,
+  # to use the addresses yourself, but most often this target group is just
+  # connected to an application load balancer, or network load balancer, so
+  # it can automatically distribute traffic across all the targets.
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 60
+      HealthCheckPath: /healthcheck #implemented in the backend
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 3
+      TargetType: ip
+      Name:
+        Fn::Join:
+        - "-"
+        - - "sftp-web-client-service"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Port: !Ref 'ContainerPort'
+      Protocol: HTTP
+      UnhealthyThresholdCount: 3
+      VpcId:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'VPCResourceStack', 'VPCID']]
+
+  PublicLoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: !Ref ACMCertificateARN
+      DefaultActions:
+        - TargetGroupArn: !Ref 'TargetGroup'
+          Type: 'forward'
+      LoadBalancerArn:
+        Fn::ImportValue:
+          !Join [':', [!Ref 'ECSStackName', 'PublicLoadBalancer']]
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS-1-2-Ext-2018-06
+
+  WebClientAccessLogs:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "S3 bucket should likely have a bucket policy. It is a warning."
+          - id: W35
+            reason: "S3 Bucket should have access logging configured. It is a warning."
+    Properties:
+      BucketName:
+        Fn::Join:
+          - "-"
+          - - "sftp-web-ui-access-logs"
+            - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      AccessControl: LogDeliveryWrite
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+
+  SFTPWebUIBucket:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "CF will assign bucket policy to restrict direct access."
+    Properties:
+      BucketName:
+        Fn::Join:
+          - "-"
+          - - "sftp-web-ui-artifacts"
+            - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+      LoggingConfiguration:
+        DestinationBucketName: !Ref WebClientAccessLogs
+
+Outputs:
+  SFTPWebClientBucket:
+    Description: 'S3 Web Client Bucket'
+    Value: !Ref SFTPWebUIBucket
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'SFTPWebClientBucket' ] ]
+  BucketUrl:
+    Description: 'S3 Bucket Url'
+    Value: !GetAtt 'SFTPWebUIBucket.WebsiteURL'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'BucketUrl' ] ]
+  BucketDomain:
+    Description: 'S3 Bucket Domain'
+    Value: !GetAtt 'SFTPWebUIBucket.DomainName'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'BucketDomain' ] ]

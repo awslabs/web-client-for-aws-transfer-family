@@ -1,0 +1,26 @@
+body {
+    .ui-inputtext {
+        color: $textColor;
+        font-size: $fontSize;
+        background: $inputBgColor;
+        padding: $inputPadding;
+        border: 1px solid $inputBorderColor;
+        -moz-border-radius: 2px;
+        -webkit-border-radius: 2px;
+        border-radius: 2px;
+        -webkit-appearance: none;
+        -moz-appearance: none;
+        appearance: none;
+
+        &:enabled:hover:not(.ui-state-error) {
+            border-color: $inputHoverBorderColor;
+        }
+
+        &:enabled:focus:not(.ui-state-error) {
+            border-color: $inputFocusBorderColor;
+            box-shadow: 0 2px 4px 0px rgba(0, 0, 0, 0.3);
+            -webkit-box-shadow: 0 2px 4px 0px rgba(0, 0, 0, 0.3);
+            -moz-box-shadow: 0 1px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+    }
+}

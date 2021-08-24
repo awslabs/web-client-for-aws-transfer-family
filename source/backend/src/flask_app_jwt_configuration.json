@@ -1,0 +1,14 @@
+{
+    "JWT_TOKEN_LOCATION": ["cookies"],
+    "JWT_ACCESS_COOKIE_PATH": "/api/",
+    "JWT_REFRESH_COOKIE_PATH": "/token/refresh",
+    "JWT_COOKIE_CSRF_PROTECT": true,
+    "JWT_CSRF_IN_COOKIES": true,
+    "JWT_COOKIE_DOMAIN": "REPLACE_ME_COMPANY_DOMAIN",
+    "front_end_CORS_origin": "https://REPLACE_ME_CLOUDFRONT_CNAME",
+    "JWT_ACCESS_TOKEN_EXPIRES": 900,
+    "JWT_COOKIE_SAMESITE": "None",
+    "JWT_COOKIE_SECURE": true
+}
+
+
