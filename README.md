@@ -154,7 +154,7 @@ provide a clean environment to install our dev dependencies without impact to ot
 desktop environment.
 
 1.	Clone project code repository to your local workstation, from the GitHub location.
-`git clone https://github.com/awslabs/web-client-for-aws-transfer-family`
+`git clone https://github.com/awslabs/web-client-for-aws-transfer-family -b open-source`
 
 2. Install Docker
 ```shell
