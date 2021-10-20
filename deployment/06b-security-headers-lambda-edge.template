@@ -1,0 +1,62 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: (SO0103-security-headers) %%SOLUTION_NAME%% - This stack will implement security headers using Lambda@Edge"
+
+Parameters:
+  DomainName:
+    Type: String
+    Description: domain name for the customer that will be associated with the cloudfront distribution
+    Default: 'mycompanydomain.com'
+Resources:
+  SecurityHeadersLambda:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W89
+            reason: "Edge function. No VPC configuration"
+          - id: W92
+            reason: "Edge function. Concurrent execution reservation not required for this use case."
+    Properties:
+      Role: !GetAtt SecurityHeadersLambdaRole.Arn
+      Runtime: nodejs10.x
+      Handler: index.handler
+      Code:
+        ZipFile: !Join
+          - "\n"
+          - - "exports.handler = (event, context, callback) =>"
+            - "{"
+            - "   const response = event.Records[0].cf.response;"
+            - "   const headers = response.headers;"
+            - "   headers['strict-transport-security'] = [{key: 'Strict-Transport-Security', value: 'max-age=15768000; includeSubdomains'}];"
+            - "   headers['x-frame-options'] = [{key: 'X-Frame-Options', value: 'sameorigin'}];"
+            - "   headers['x-xss-protection'] = [{key: 'X-XSS-Protection', value: '1; mode=block'}];"
+            - "   headers['x-content-type-options'] = [{key: 'X-Content-Type-Options', value: 'nosniff'}];"
+            - !Sub |
+              headers['content-security-policy'] = [{key: 'Content-Security-Policy', value: "default-src 'self' *.${DomainName}; img-src * 'self' *.${DomainName} data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"}];
+            - "   callback(null, response);"
+            - "};"
+
+  SecurityHeadersLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+                - edgelambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  VersionedSecurityHeadersLambda:
+    Type: 'AWS::Lambda::Version'
+    Properties:
+      FunctionName: !Ref SecurityHeadersLambda
+
+Outputs:
+  VersionedSecurityHeadersLambda:
+    Description: 'Lambda@Edge Version'
+    Value: !Ref VersionedSecurityHeadersLambda

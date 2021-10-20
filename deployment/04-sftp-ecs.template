@@ -1,0 +1,382 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: (SO0103-ecs) %%SOLUTION_NAME%% -This stack deploys a ECS Fargate cluster that is in a VPC with both
+             public and private subnets. Containers will be deployed into private subnets.
+             One public-facing load-balancer will be deployed in public subnet, which can be used to
+             send traffic to the containers in the private subnet.
+Parameters:
+
+  VPCResourceStack:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: sftp-vpc-stack
+
+  HostedZoneId:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    Description: The Id of the hosted zone used to create an alias record for the ALB.
+
+  RecordName:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    Description: The record set name. For example, if the hosted zone is 'mycompanydomain.com' then the entry should be '<RecordName>.mycompanydomain.com'
+    Default: sftpapi.mycompanydomain.com
+
+Resources:
+  # A public facing load balancer, this is used for accepting traffic from the public
+  # internet and directing it to private microservices on ECS
+  PublicLoadBalancerSG:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F1000
+            reason: "Allow all egress traffic"
+          - id: W9
+            reason: "IP protocol set to TCP"
+          - id: W2
+            reason: "Allow all ingress traffic because it is associated with ALB"
+          - id: W36
+            reason: "group description added"
+    Properties:
+      GroupDescription: Access to the public facing load balancer
+      VpcId:
+        Fn::ImportValue: !Sub "${VPCResourceStack}:VPCID"
+      SecurityGroupIngress:
+          # Allow access to ALB from anywhere on the internet on port 443
+          - CidrIp: 0.0.0.0/0
+            IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+
+  PublicLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W52
+            reason: "AccessLogging left on users of the solution to configure, if needed."
+    Properties:
+      Scheme: internet-facing
+      LoadBalancerAttributes:
+      - Key: idle_timeout.timeout_seconds
+        Value: '60'
+      - Key: deletion_protection.enabled
+        Value: true
+      - Key: routing.http.drop_invalid_header_fields.enabled
+        Value: true
+      Subnets:
+        # The load balancer is placed into the public subnets, so that traffic
+        # from the internet can reach the load balancer directly via the internet gateway
+        - Fn::ImportValue: !Sub '${VPCResourceStack}:PublicSubnet1'
+        - Fn::ImportValue: !Sub '${VPCResourceStack}:PublicSubnet2'
+        - Fn::ImportValue: !Sub '${VPCResourceStack}:PublicSubnet3'
+      SecurityGroups: [!Ref 'PublicLoadBalancerSG']
+
+  R53ALBAliasRecordSet:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref 'HostedZoneId'
+      Comment: DNS name for the ALB.
+      RecordSets:
+        - Name: !Sub '${RecordName}.'
+          Type: A
+          AliasTarget:
+            HostedZoneId: !GetAtt 'PublicLoadBalancer.CanonicalHostedZoneID'
+            DNSName: !GetAtt 'PublicLoadBalancer.DNSName'
+  # ECS Resources
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+
+  # A security group for the containers we will run in Fargate.
+  # Rules allowing network traffic from a public facing load
+  # balancer and from other members of the security group.
+  FargateContainerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: F1000
+            reason: "The containers will be running in private subnet"
+          - id: W42
+            reason: "resource names are unique."
+    Properties:
+      GroupDescription: Access to the Fargate containers
+      VpcId:
+        Fn::ImportValue: !Sub "${VPCResourceStack}:VPCID"
+
+  EcsSecurityGroupIngressFromPublicALB:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Ingress from the public ALB
+      GroupId: !Ref 'FargateContainerSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'PublicLoadBalancerSG'
+
+  EcsSecurityGroupIngressFromSelf:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W42
+            reason: "resource names are unique."
+    Properties:
+      Description: Ingress from other containers in the same security group
+      GroupId: !Ref 'FargateContainerSecurityGroup'
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'FargateContainerSecurityGroup'
+
+  PrivateEndpointsSGIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W42
+            reason: "Containers run in private subnets."
+    Properties:
+      Description: Ingress from fargate container security group.
+      GroupId:
+        Fn::ImportValue: !Sub "${VPCResourceStack}:EndpointsSecurityGroup"
+      IpProtocol: -1
+      SourceSecurityGroupId: !Ref 'FargateContainerSecurityGroup'
+
+  # This is an IAM role which authorizes ECS to manage resources on your
+  # account on your behalf, such as updating your load balancer with the
+  # details of where your containers are, so that traffic can reach your
+  # containers.
+  ECSRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "role created before resource creation. Permissions assigned are granular"
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+      - PolicyName: ecs-service
+        PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+              # Rules which allow ECS to attach network interfaces to instances
+              # on your behalf in order for awsvpc networking mode to work right
+              - 'ec2:AttachNetworkInterface'
+              - 'ec2:CreateNetworkInterface'
+              - 'ec2:CreateNetworkInterfacePermission'
+              - 'ec2:DeleteNetworkInterface'
+              - 'ec2:DeleteNetworkInterfacePermission'
+              - 'ec2:Describe*'
+              - 'ec2:DetachNetworkInterface'
+
+              # Rules which allow ECS to update load balancers on your behalf
+              # with the information sabout how to send traffic to your containers
+              - 'elasticloadbalancing:DeregisterInstancesFromLoadBalancer'
+              - 'elasticloadbalancing:DeregisterTargets'
+              - 'elasticloadbalancing:Describe*'
+              - 'elasticloadbalancing:RegisterInstancesWithLoadBalancer'
+              - 'elasticloadbalancing:RegisterTargets'
+            Resource: '*'
+
+  # This is a role which allows the ECS Tasks to download images from ECR
+  # and upload logs to CloudWatch
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "role created before resource creation. Permissions assigned are granular"
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: [ecs-tasks.amazonaws.com]
+          Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: AmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+            - Effect: Allow
+              Action:
+                # Allow the ECS Tasks to download images from ECR
+                - 'ecr:GetAuthorizationToken'
+                - 'ecr:BatchCheckLayerAvailability'
+                - 'ecr:GetDownloadUrlForLayer'
+                - 'ecr:BatchGetImage'
+
+                # Allow the ECS tasks to upload logs to CloudWatch
+                - 'logs:CreateLogStream'
+                - 'logs:PutLogEvents'
+              Resource: '*'
+            - Effect: Allow
+              Action:
+                # Access Parameter Store parameters
+                - 'ssm:GetParameters'
+              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sftpui-*'
+
+  # This is a role which is used by the ECS tasks themselves
+  # to access other AWS services
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "role created before resource creation. Permissions assigned are granular"
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs-tasks.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      Path: /
+      Policies:
+        - PolicyName: ecs-task-role-policy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  # Rules to give the service's containers if the code within needs to
+                  # access other AWS resources like S3 buckets, DynamoDB tables, etc
+                  - 'kms:DescribeKey'
+                  - 'kms:Encrypt'
+                  - 'kms:Decrypt'
+                  - 'kms:ReEncrypt*'
+                  - 'kms:GenerateDataKey'
+                  - 'kms:GenerateDataKeyWithoutPlaintext'
+                  #ALlow the ECS tasks to put cloudwatch metric data
+                  - 'cloudwatch:PutMetricData'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  # Access Parameter Store parameters
+                  - 'ssm:GetParameter'
+                  - 'ssm:PutParameter'
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sftpui-*'
+
+  KMSKey:
+    DependsOn: [ECSTaskExecutionRole, ECSTaskRole]
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS Key to encrypt/decrypt SFTP JWT
+      Enabled: true
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: kms:*
+            Resource: '*'
+          - Sid: Allow use of the key
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt 'ECSTaskRole.Arn'
+            Action:
+              - kms:DescribeKey
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:ReEncrypt*
+              - kms:GenerateDataKey
+              - kms:GenerateDataKeyWithoutPlaintext
+            Resource: '*'
+      KeyUsage: ENCRYPT_DECRYPT
+
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W28
+            reason: "Resource created with unique name."
+    Properties:
+      RepositoryName:
+        Fn::Join:
+        - "-"
+        - - "sftp-backend"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      ImageScanningConfiguration:
+        ScanOnPush: "true"
+      RepositoryPolicyText:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Sid: AllowPushPull
+            Effect: Allow
+            Principal:
+              AWS:
+                - !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action:
+              - "ecr:GetDownloadUrlForLayer"
+              - "ecr:BatchGetImage"
+              - "ecr:BatchCheckLayerAvailability"
+              - "ecr:PutImage"
+              - "ecr:InitiateLayerUpload"
+              - "ecr:UploadLayerPart"
+              - "ecr:CompleteLayerUpload"
+
+# These are the values output by the CloudFormation template. Be careful
+# about changing any of them, because of them are exported with specific
+# names so that the other task related CF templates can use them.
+Outputs:
+  ClusterName:
+    Description: The name of the ECS cluster
+    Value: !Ref 'ECSCluster'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ClusterName' ] ]
+  ExternalUrl:
+    Description: The url of the external load balancer
+    Value: !Join ['', ['http://', !GetAtt 'PublicLoadBalancer.DNSName']]
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ExternalUrl' ] ]
+  ECSRole:
+    Description: The ARN of the ECS role
+    Value: !GetAtt 'ECSRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSRole' ] ]
+  ECSTaskExecutionRole:
+    Description: The ARN of the ECS role
+    Value: !GetAtt 'ECSTaskExecutionRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSTaskExecutionRole' ] ]
+  ECSTaskRole:
+    Description: The ARN of the ECS Task role
+    Value: !GetAtt 'ECSTaskRole.Arn'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECSTaskRole' ] ]
+  ECR:
+    Description: ECR details
+    Value: !Ref 'ECRRepository'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'ECRRepoName' ] ]
+  PublicLoadbalancerARN:
+    Description: The ARN of the public load balancer's Listener
+    Value: !Ref 'PublicLoadBalancer'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'PublicLoadBalancer' ] ]
+  FargateContainerSecurityGroup:
+    Description: A security group used to allow Fargate containers to receive traffic
+    Value: !Ref 'FargateContainerSecurityGroup'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'FargateContainerSecurityGroup' ] ]
+  KMSKeyID:
+    Description: ID of KMS Key that is used to encrypt/decrypt SFTP JWT
+    Value: !Ref 'KMSKey'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'KMSKeyID' ] ]

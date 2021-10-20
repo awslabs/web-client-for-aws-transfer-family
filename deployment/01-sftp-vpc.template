@@ -1,0 +1,468 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: (SO0103-vpc) %%SOLUTION_NAME%% - This template deploys a VPC for %%SOLUTION_NAME%%
+
+Parameters:
+
+    ResourceTag:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+        Default: SFTPVPC
+
+    VpcCIDR:
+        Description: VPC CIDR /21 = 2046 hosts; can have 8 /24 subnets (10.194.0.0/24 - 10.194.7.0/24)
+        Type: String
+        Default: 10.194.0.0/21
+
+    PublicSubnet1CIDR:
+        Description: Public subnet AZ1 /24=254 hosts (3rd octet odd = public subnets)
+        Type: String
+        Default: 10.194.1.0/24
+
+    PublicSubnet2CIDR:
+        Description: Public subnet AZ2 /24=254 hosts (3rd octet odd = public subnets)
+        Type: String
+        Default: 10.194.3.0/24
+
+    PublicSubnet3CIDR:
+        Description: Public subnet AZ3 /24=254 hosts (3rd octet odd = public subnets)
+        Type: String
+        Default: 10.194.5.0/24
+
+    PrivateSubnet1CIDR:
+        Description: Private subnet AZ1 /24=254 hosts (3rd octet even = private subnets)
+        Type: String
+        Default: 10.194.2.0/24
+
+    PrivateSubnet2CIDR:
+        Description: Private subnet AZ2 /24=254 hosts (3rd octet even = private subnets)
+        Type: String
+        Default: 10.194.4.0/24
+
+    PrivateSubnet3CIDR:
+        Description: Private subnet AZ3 /24=254 hosts (3rd octet even = private subnets)
+        Type: String
+        Default: 10.194.6.0/24
+
+Resources:
+
+    VPCFlowLogRole:
+      Type: AWS::IAM::Role
+      Metadata:
+          cfn_nag:
+              rules_to_suppress:
+                  - id: W11
+                    reason: "Allowing * here as we cant make preemptive assumptions to specific resources.."
+      Properties:
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: vpc-flow-logs.amazonaws.com
+              Action: ['sts:AssumeRole']
+        Path: /
+        Policies:
+          - PolicyName: vpc-flow-log-policy
+            PolicyDocument:
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - 'logs:CreateLogGroup'
+                    - 'logs:CreateLogStream'
+                    - 'logs:PutLogEvents'
+                    - 'logs:DescribeLogGroups'
+                    - 'logs:DescribeLogStreams'
+                  Resource: '*' # allowing * here as we cant make preemptive assumptions to specific resources.
+
+
+    VPC:
+        Type: AWS::EC2::VPC
+        Properties:
+            CidrBlock: !Ref VpcCIDR
+            EnableDnsHostnames: true
+            Tags:
+                - Key: Name
+                  Value: !Ref ResourceTag
+
+    VPCFlowLog:
+        Type: AWS::EC2::FlowLog
+        Properties:
+            DeliverLogsPermissionArn: !GetAtt VPCFlowLogRole.Arn
+            LogGroupName: SFTPVPCFlowLogsGroup
+            ResourceId: !Ref VPC
+            ResourceType: VPC
+            TrafficType: ALL
+
+    InternetGateway:
+        Type: AWS::EC2::InternetGateway
+        Properties:
+            Tags:
+                - Key: Name
+                  Value: !Ref ResourceTag
+
+    InternetGatewayAttachment:
+        Type: AWS::EC2::VPCGatewayAttachment
+        Properties:
+            InternetGatewayId: !Ref InternetGateway
+            VpcId: !Ref VPC
+
+    PublicSubnet1:
+        Type: AWS::EC2::Subnet
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    - id: W33
+                      reason: "MapPublicIpOnLaunch is set to True but no instances/containers are being launched in public subnet"
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet1CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Public Subnet (AZ1)
+
+    PublicSubnet2:
+        Type: AWS::EC2::Subnet
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    - id: W33
+                      reason: "MapPublicIpOnLaunch is set to True but no instances/containers are being launched in public subnet"
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet2CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Public Subnet (AZ2)
+
+    PublicSubnet3:
+        Type: AWS::EC2::Subnet
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    - id: W33
+                      reason: "MapPublicIpOnLaunch is set to True but no instances/containers are being launched in public subnet"
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 2, !GetAZs '' ]
+            CidrBlock: !Ref PublicSubnet3CIDR
+            MapPublicIpOnLaunch: true
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Public Subnet (AZ3)
+
+    PrivateSubnet1:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 0, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet1CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Private Subnet (AZ1)
+
+    PrivateSubnet2:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 1, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet2CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Private Subnet (AZ2)
+
+    PrivateSubnet3:
+        Type: AWS::EC2::Subnet
+        Properties:
+            VpcId: !Ref VPC
+            AvailabilityZone: !Select [ 2, !GetAZs '' ]
+            CidrBlock: !Ref PrivateSubnet3CIDR
+            MapPublicIpOnLaunch: false
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Private Subnet (AZ3)
+
+    PublicRouteTable:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Public Routes
+
+    DefaultPublicRoute:
+        Type: AWS::EC2::Route
+        DependsOn: InternetGatewayAttachment
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            DestinationCidrBlock: 0.0.0.0/0
+            GatewayId: !Ref InternetGateway
+
+    PublicSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet1
+
+    PublicSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet2
+
+    PublicSubnet3RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PublicRouteTable
+            SubnetId: !Ref PublicSubnet3
+
+
+
+    PrivateRouteTable1:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Private Routes (AZ1)
+
+    PrivateSubnet1RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable1
+            SubnetId: !Ref PrivateSubnet1
+
+    PrivateRouteTable2:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Private Routes (AZ2)
+
+    PrivateSubnet2RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable2
+            SubnetId: !Ref PrivateSubnet2
+
+    PrivateRouteTable3:
+        Type: AWS::EC2::RouteTable
+        Properties:
+            VpcId: !Ref VPC
+            Tags:
+                - Key: Name
+                  Value: !Sub ${ResourceTag} Private Routes (AZ3)
+
+    PrivateSubnet3RouteTableAssociation:
+        Type: AWS::EC2::SubnetRouteTableAssociation
+        Properties:
+            RouteTableId: !Ref PrivateRouteTable3
+            SubnetId: !Ref PrivateSubnet3
+
+    EndpointsSecurityGroup: # This security group only applies to resources in private subnets (e.g. ECS Tasks)
+        Type: AWS::EC2::SecurityGroup
+        Metadata:
+            cfn_nag:
+                rules_to_suppress:
+                    - id: W40 #TODO: see https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-ec2-security-group-rule-1.html#cfn-ec2-security-group-rule-ipprotocol
+                      reason: "This security group only applies to resources in private subnets. Hence, suppressing the rule - W40 Security Groups egress with an IpProtocol of -1 found"
+                    - id: F1000
+                      reason: "This security group only applies to resources in private subnets. Hence, suppressing the rule - F1000 Missing egress rule means all traffic is allowed outbound. Make this explicit if it is desired configuration"
+                    - id: W5
+                      reason: "This security group only applies to resources in private subnets. Hence, suppressing the rule - W5 Security Groups found with cidr open to world on egress"
+                    - id: W36
+                      reason: "This security group only applies to resources in private subnets. Hence,  suppressing the rule - W36 Security group rules without a description obscure their purpose and may lead to bad practices in ensuring they only allow traffic from the ports and sources/destinations required."
+        Properties:
+            GroupDescription: Security group for interface endpoints
+            VpcId:
+              !Ref VPC
+
+    ECRDKRVPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            PrivateDnsEnabled: true # Enabling private DNS requires both enableDnsSupport and enableDnsHostnames VPC attributes set to true for vpc
+            SecurityGroupIds:
+                - !Ref EndpointsSecurityGroup
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.ecr.dkr' ] ]
+            SubnetIds:
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+                - !Ref PrivateSubnet3
+            VpcEndpointType: Interface
+            VpcId:
+              !Ref VPC
+
+    #VPC Endpoints for ECR so that containers in private subnet can communicate to ECR and CloudWatch
+    ECRAPIVPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            PrivateDnsEnabled: true #Enabling private DNS requires both enableDnsSupport and enableDnsHostnames VPC attributes set to true for vpc
+            SecurityGroupIds:
+                - !Ref EndpointsSecurityGroup
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.ecr.api' ] ]
+            SubnetIds:
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+                - !Ref PrivateSubnet3
+            VpcEndpointType: Interface
+            VpcId:
+              !Ref VPC
+
+    #Need to create S3 VPCE as well due to ECR's dependency on it
+    S3VPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.s3' ] ]
+            VpcEndpointType: Gateway
+            VpcId:
+                !Ref VPC
+            RouteTableIds:
+                - !Ref PrivateRouteTable1
+                - !Ref PrivateRouteTable2
+                - !Ref PrivateRouteTable3
+
+    CloudWatchVPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            PrivateDnsEnabled: true # Enabling private DNS requires both enableDnsSupport and enableDnsHostnames VPC attributes set to true for vpc
+            SecurityGroupIds:
+                - !Ref EndpointsSecurityGroup
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.logs' ] ]
+            SubnetIds:
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+                - !Ref PrivateSubnet3
+            VpcEndpointType: Interface
+            VpcId:
+                !Ref VPC
+    # Required for Fargate task to public metrics in Cloudwatch
+    CloudWatchMonitoringVPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            PrivateDnsEnabled: true # Enabling private DNS requires both enableDnsSupport and enableDnsHostnames VPC attributes set to true for vpc
+            SecurityGroupIds:
+                - !Ref EndpointsSecurityGroup
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.monitoring' ] ]
+            SubnetIds:
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+                - !Ref PrivateSubnet3
+            VpcEndpointType: Interface
+            VpcId:
+              !Ref VPC
+
+    KMSVPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            PrivateDnsEnabled: true #Enabling private DNS requires both enableDnsSupport and enableDnsHostnames VPC attributes set to true for vpc
+            SecurityGroupIds:
+                - !Ref EndpointsSecurityGroup
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.kms' ] ]
+            SubnetIds:
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+                - !Ref PrivateSubnet3
+            VpcEndpointType: Interface
+            VpcId:
+              !Ref VPC
+
+    SSMVPCEndpoint:
+        Type: AWS::EC2::VPCEndpoint
+        Properties:
+            PrivateDnsEnabled: true #Enabling private DNS requires both enableDnsSupport and enableDnsHostnames VPC attributes set to true for vpc
+            SecurityGroupIds:
+                - !Ref EndpointsSecurityGroup
+            ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref 'AWS::Region', '.ssm' ] ]
+            SubnetIds:
+                - !Ref PrivateSubnet1
+                - !Ref PrivateSubnet2
+                - !Ref PrivateSubnet3
+            VpcEndpointType: Interface
+            VpcId:
+              !Ref VPC
+
+Outputs:
+    StackID:
+        Description: Part of stack ID to be used in resource naming convention
+        Value: !Select [0, Fn::Split: [ "-", Fn::Select: [2, Fn::Split: [ "/", !Ref AWS::StackId]]]]
+        Export:
+            Name:
+              !Sub "${AWS::StackName}:StackID"
+
+    VPC:
+        Description: A reference to the created VPC
+        Value: !Ref VPC
+        Export:
+            Name:
+              !Sub "${AWS::StackName}:VPCID"
+
+    PublicSubnets:
+        Description: A list of the public subnets
+        Value: !Join [ ",", [ !Ref PublicSubnet1, !Ref PublicSubnet2, !Ref PublicSubnet3 ]]
+
+    PrivateSubnets:
+        Description: A list of the private subnets
+        Value: !Join [ ",", [ !Ref PrivateSubnet1, !Ref PrivateSubnet2, !Ref PrivateSubnet3 ]]
+
+    PublicSubnet1:
+        Description: A reference to the public subnet in the 1st Availability Zone
+        Value: !Ref PublicSubnet1
+        Export:
+            Name:
+              !Sub "${AWS::StackName}:PublicSubnet1"
+
+    PublicSubnet2:
+        Description: Public subnet in the 2nd Availability Zone
+        Value: !Ref PublicSubnet2
+        Export:
+            Name:
+              !Sub "${AWS::StackName}:PublicSubnet2"
+
+    PublicSubnet3:
+        Description: Public subnet in the 3rd Availability Zone
+        Value: !Ref PublicSubnet3
+        Export:
+            Name:
+              !Sub "${AWS::StackName}:PublicSubnet3"
+
+    PrivateSubnet1:
+        Description: A reference to the private subnet in the 1st Availability Zone
+        Value: !Ref PrivateSubnet1
+        Export:
+          Name:
+            !Sub "${AWS::StackName}:PrivateSubnet1"
+
+    PrivateSubnet2:
+        Description: A reference to the private subnet in the 2nd Availability Zone
+        Value: !Ref PrivateSubnet2
+        Export:
+          Name:
+            !Sub "${AWS::StackName}:PrivateSubnet2"
+
+    PrivateSubnet3:
+        Description: A reference to the private subnet in the 3rd Availability Zone
+        Value: !Ref PrivateSubnet3
+        Export:
+          Name:
+            !Sub "${AWS::StackName}:PrivateSubnet3"
+
+    DefaultSecurityGroup:
+        Description: A reference to the default VPC security group
+        Value: !GetAtt VPC.DefaultSecurityGroup
+        Export:
+            Name:
+              !Sub "${AWS::StackName}:DefaultSecurityGroup"
+    EndpointsSecurityGroup:
+        Description: A reference to the private endpoints security group
+        Value: !Ref EndpointsSecurityGroup
+        Export:
+          Name:
+            !Sub "${AWS::StackName}:EndpointsSecurityGroup"
+
+
+

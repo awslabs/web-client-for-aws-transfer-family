@@ -1,0 +1,726 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: (SO0103-sftpendpoint) %%SOLUTION_NAME%% - This template creates Lambda-backed API Gateway for integrating with custom identity provider in AWS Transfer Family with SFTP.
+
+Parameters:
+
+  AWSTransferForSFTPS3Bucket:
+    Type: String
+    Description : The name of the S3 bucket used for the SFTP server
+
+  #TODO: what are requirements? Just create it instead of relying on default sg.
+  AWSTransferVPCSecGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Default Security Group for the VPC identified before
+
+  VPCResourceStack:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: sftp-vpc-stack
+
+  CognitoResourceStack:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: sftp-cognito-stack
+
+Mappings:
+  SourceCode:
+    General:
+      S3Bucket: "%%BUCKET_NAME%%"
+      KeyPrefix: "%%SOLUTION_NAME%%/%%VERSION%%"
+
+Resources:
+
+  TransferSFTPCloudWatchLogsWriteLogs:
+    Description: Allows AWS Transfer Family to write CloudWatchLogs
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: transfer.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: TransferSFTPWriteLogsPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+                Sid: VisualEditor0
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                  - logs:PutLogEvents
+                Resource: "arn:aws:logs:*:*:log-group:/aws/transfer/*"
+  TransferSFTPS3Access: # Allows AWS Transfer Family to access S3 bucket
+    Description: Allows AWS Transfer Family to access S3 bucket
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: transfer.amazonaws.com
+            Action: sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: TransferSFTPS3BucketAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:DeleteObjectVersion
+                  - s3:GetObjectVersion
+                  - s3:GetObjectACL
+                  - s3:PutObjectACL
+                Resource:
+                  Fn::Sub: arn:aws:s3:::${AWSTransferForSFTPS3Bucket}/*
+              - Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                Resource:
+                  Fn::Sub: arn:aws:s3:::${AWSTransferForSFTPS3Bucket}
+  IdentityProviderApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name:
+        Fn::Join:
+          - "-"
+          - - "Transfer Identity Provider basic template API"
+            - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      Description: API used for GetUserConfig requests
+      FailOnWarnings: true
+      EndpointConfiguration:
+        Types:
+        - REGIONAL
+
+  # DynamoDB backup vault using AWS Backup
+  BackupVaultWithDailyBackups:
+    Type: "AWS::Backup::BackupVault"
+    Properties:
+      BackupVaultName:
+        Fn::Join:
+        - "-"
+        - - "DynamoDBBackupVaultWithDailyBackups"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+
+  # DynamoDB backup plan using AWS Backup
+  BackupPlanWithDailyBackups:
+    Type: "AWS::Backup::BackupPlan"
+    Properties:
+      BackupPlan:
+        BackupPlanName:
+          Fn::Join:
+          - "-"
+          - - "DynamoDBBackupPlanWithDailyBackups"
+            - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+        BackupPlanRule:
+          - RuleName: "RuleForDailyBackups"
+            TargetBackupVault: !Ref BackupVaultWithDailyBackups
+            ScheduleExpression: "cron(0 5 ? * * *)"
+    DependsOn: BackupVaultWithDailyBackups
+
+  # DynamoDB Table
+  SFTPUserDirectoryMapping:
+    Type: AWS::DynamoDB::Table
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W78
+            reason: "DynamoDB backup defined using AWS Backups"
+          - id: W28
+            reason: "Unique resource name defined for consistency across all resource names."
+    Properties:
+      TableName:
+        Fn::Join:
+        - "-"
+        - - "SFTPUserDirectoryMapping"
+          - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      AttributeDefinitions:
+        - AttributeName: "username"
+          AttributeType: "S"
+      KeySchema:
+        - AttributeName: "username"
+          KeyType: "HASH"
+      BillingMode: "PAY_PER_REQUEST"
+      SSESpecification:
+        SSEEnabled: True
+      Tags:
+        - Key: "ddbbackup"
+          Value: "daily"
+
+  # IAM Role for AWS Backup
+  BackupRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "backup.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup"
+
+  # Tag based DynamoDB Backup
+  TagBasedBackupSelection:
+    Type: "AWS::Backup::BackupSelection"
+    Properties:
+      BackupSelection:
+        SelectionName: "TagBasedBackupSelection"
+        IamRoleArn: !GetAtt BackupRole.Arn
+        ListOfTags:
+          - ConditionType: "STRINGEQUALS"
+            ConditionKey: "ddbbackup"
+            ConditionValue: "daily"
+      BackupPlanId: !Ref BackupPlanWithDailyBackups
+    DependsOn: BackupPlanWithDailyBackups
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+        - PolicyName: CWLogsPermissionPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*'
+        - PolicyName: DynomoDBTableAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource:
+                  Fn::GetAtt: SFTPUserDirectoryMapping.Arn
+        - PolicyName: ParameterStoreAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:PutParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sftpui-*'
+        - PolicyName: CognitoUserPoolAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:DescribeUserPoolClient
+                  - cognito-idp:AdminInitiateAuth
+                Resource:
+                  Fn::ImportValue: !Sub '${CognitoResourceStack}:UserPoolArn'
+
+  ApiCloudWatchLogsRole:
+    Description: IAM role used by API Gateway to log API requests to CloudWatch
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "resource created after IAM role creation."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - apigateway.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: ApiGatewayLogsPolicy
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DescribeLogGroups
+            - logs:DescribeLogStreams
+            - logs:PutLogEvents
+            - logs:GetLogEvents
+            - logs:FilterLogEvents
+            Resource: "*"
+  ApiLoggingAccount:
+    Type: AWS::ApiGateway::Account
+    DependsOn:
+    - IdentityProviderApi
+    Properties:
+      CloudWatchRoleArn:
+        Fn::GetAtt: ApiCloudWatchLogsRole.Arn
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W69
+            reason: "AccessLogSetting not required for this use case."
+          - id: W64
+            reason: "UsagePlan not required for this use case."
+    Properties:
+      DeploymentId:
+        Ref: ApiDeployment
+      MethodSettings:
+      - DataTraceEnabled: false
+        HttpMethod: "*"
+        LoggingLevel: INFO
+        ResourcePath: "/*"
+      RestApiId:
+        Ref: IdentityProviderApi
+      StageName: prod
+  ApiDeployment:
+    DependsOn:
+    - GetUserConfigRequest
+    Type: AWS::ApiGateway::Deployment
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W68
+            reason: "UsagePlan not required for this use case."
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      StageName: stagefordeployment
+  TransferIdentityProviderRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "resource created after IAM role creation."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: transfer.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Policies:
+      - PolicyName: TransferCanInvokeThisApi
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - execute-api:Invoke
+            Resource:
+              Fn::Sub: arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${IdentityProviderApi}/prod/GET/*
+      - PolicyName: TransferCanReadThisApi
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+          - Effect: Allow
+            Action:
+            - apigateway:GET
+            Resource: "*"
+      - PolicyName: TransferCanVerifyReturnedUserRole
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: iam:PassRole
+              Resource:
+                Fn::GetAtt: TransferSFTPS3Access.Arn
+
+
+  SFTPCustomAuthLambda:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: "CW Logs permissions defined"
+          - id: W89
+            reason: "VPC configuration for Lambda not supported for this use case."
+          - id: W92
+            reason: "reserved concurrency not required for this use case."
+          - id: W24
+            reason: "approprate permissions are assigned to the role."
+    Description: A function to provide IAM roles and policies for given user and serverId.
+    Properties:
+      Handler: SFTPCustomAuthLambdaFunction.lambda_handler
+      Role:
+        Fn::GetAtt: LambdaExecutionRole.Arn
+      Runtime: python3.7
+      Timeout: 5
+      Environment:
+        Variables:
+          USER_POOL_ID:
+            Fn::ImportValue: !Sub '${CognitoResourceStack}:UserPoolId'
+          CLIENT_ID:
+            Fn::ImportValue: !Sub '${CognitoResourceStack}:UserPoolClientId'
+          SFTPUSRDIRMAP: !Ref SFTPUserDirectoryMapping
+          STACK_ID:
+            Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+          botoConfig: '{"user_agent_extra": "AwsSolution/SO0103/%%VERSION%%"}'
+          ROLE_ARN:
+            Fn::GetAtt: TransferSFTPS3Access.Arn
+      Code:
+        S3Bucket:
+          !Join [
+            "-",
+            [
+            !FindInMap ["SourceCode", "General", "S3Bucket"],
+            Ref: "AWS::Region",
+            ],
+          ]
+        S3Key:
+          !Join [
+            "/lambda/",
+            [
+            !FindInMap ["SourceCode", "General", "KeyPrefix"],
+            "SFTPCustomAuthLambdaFunction.zip",
+            ],
+          ]
+
+  SFTPCustomAuthLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W24
+            reason: "approprate permissions are assigned to the role."
+    Properties:
+      Action: lambda:invokeFunction
+      FunctionName:
+        Fn::GetAtt: SFTPCustomAuthLambda.Arn
+      Principal: apigateway.amazonaws.com
+      SourceArn:
+        Fn::Join:
+        - ""
+        - - "arn:aws:execute-api:"
+          - Ref: AWS::Region
+          - ":"
+          - Ref: AWS::AccountId
+          - ":"
+          - Ref: IdentityProviderApi
+          - "/*"
+  ServersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      ParentId:
+        Fn::GetAtt:
+        - IdentityProviderApi
+        - RootResourceId
+      PathPart: servers
+  ServerIdResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      ParentId:
+        Ref: ServersResource
+      PathPart: "{serverId}"
+  UsersResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      ParentId:
+        Ref: ServerIdResource
+      PathPart: users
+  UserNameResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      ParentId:
+        Ref: UsersResource
+      PathPart: "{username}"
+  GetUserConfigResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      ParentId:
+        Ref: UserNameResource
+      PathPart: config
+  GetUserConfigRequest:
+    Type: AWS::ApiGateway::Method
+    DependsOn: GetUserConfigResponseModel
+    Properties:
+      AuthorizationType: AWS_IAM
+      HttpMethod: GET
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Uri:
+          Fn::Join:
+          - ""
+          - - "arn:aws:apigateway:"
+            - Ref: AWS::Region
+            - ":lambda:path/2015-03-31/functions/"
+            - Fn::GetAtt:
+              - SFTPCustomAuthLambda
+              - Arn
+            - "/invocations"
+        IntegrationResponses:
+        - StatusCode: 200
+        RequestTemplates:
+          application/json: |
+            {
+              "username": "$input.params('username')",
+              "password": "$util.escapeJavaScript($input.params('Password')).replaceAll("\\'","'")",
+              "serverId": "$input.params('serverId')"
+            }
+      RequestParameters:
+        method.request.header.Password: false
+      ResourceId:
+        Ref: GetUserConfigResource
+      RestApiId:
+        Ref: IdentityProviderApi
+      MethodResponses:
+      - StatusCode: 200
+        ResponseModels:
+          application/json: UserConfigResponseModel
+  GetUserConfigResponseModel:
+    Type: AWS::ApiGateway::Model
+    Properties:
+      RestApiId:
+        Ref: IdentityProviderApi
+      ContentType: application/json
+      Description: API response for GetUserConfig
+      Name: UserConfigResponseModel
+      Schema:
+        "$schema": http://json-schema.org/draft-04/schema#
+        title: UserUserConfig
+        type: object
+        properties:
+          HomeDirectory:
+            type: string
+          Role:
+            type: string
+          Policy:
+            type: string
+          PublicKeys:
+            type: array
+            items:
+              type: string
+  AWSSFTPEIPIP01:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  AWSSFTPEIPIP02:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  AWSSFTPEIPIP03:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  AWSSFTPEndPoint:
+    Type: AWS::Transfer::Server
+    Properties :
+      EndpointType: VPC
+      EndpointDetails:
+        AddressAllocationIds:
+          - !GetAtt AWSSFTPEIPIP01.AllocationId
+          - !GetAtt AWSSFTPEIPIP02.AllocationId
+          - !GetAtt AWSSFTPEIPIP03.AllocationId
+        SubnetIds:
+          - Fn::ImportValue: !Sub '${VPCResourceStack}:PublicSubnet1'
+          - Fn::ImportValue: !Sub '${VPCResourceStack}:PublicSubnet2'
+          - Fn::ImportValue: !Sub '${VPCResourceStack}:PublicSubnet3'
+        VpcId:
+          Fn::ImportValue: !Sub "${VPCResourceStack}:VPCID"
+      IdentityProviderType: API_GATEWAY
+      IdentityProviderDetails:
+        InvocationRole: !GetAtt TransferIdentityProviderRole.Arn
+        Url:
+          Fn::Join:
+          - ""
+          - - https://
+            - Ref: IdentityProviderApi
+            - .execute-api.
+            - Ref: AWS::Region
+            - .amazonaws.com/
+            - Ref: ApiStage
+      LoggingRole: !GetAtt TransferSFTPCloudWatchLogsWriteLogs.Arn
+  AWSSFTPVPCSecGroupIngressRule:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: "Allow external SFTP traffic"
+      IpProtocol: tcp
+      CidrIp: 0.0.0.0/0
+      FromPort: 22
+      ToPort: 22
+      GroupId: !Ref AWSTransferVPCSecGroup
+
+  #Custom resource section to get DNSentries for the AWS Transfer VPC EndpointType
+  CustomResourceLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "resource created after IAM role creation."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - ec2:DescribeVpcEndpointServices
+            - ec2:DescribeVpcEndpointServicePermissions
+            - ec2:DescribeVpcEndpointServices
+            - ec2:DescribeVpcEndpointServiceConfigurations
+            - ec2:DescribeVpcEndpoints
+            - ec2:DescribeVpcEndpointConnections
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - transfer:DescribeServer
+            Resource: !GetAtt 'AWSSFTPEndPoint.Arn'
+      - PolicyName: ParameterStoreAccess
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - ssm:GetParameter
+                - ssm:PutParameter
+                - ssm:DeleteParameter
+              Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/sftpui-*'
+  TransferMiscConfigDetails:
+    Type: Custom::TransferMiscConfigDetails
+    Properties:
+      ServiceToken: !GetAtt 'TransferMiscConfigLambdaFunction.Arn'
+      TransferServerId: !GetAtt 'AWSSFTPEndPoint.ServerId'
+      TransferServerArn: !GetAtt 'AWSSFTPEndPoint.Arn'
+  TransferMiscConfigLambdaFunction:
+    Type: AWS::Lambda::Function
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: "CW Logs permissions defined"
+          - id: W92
+            reason: "reserved concurrency not required for this use case."
+          - id: W89
+            reason: "VPC configuration not required for this use case."
+    Properties:
+      Environment:
+        Variables:
+          STACK_ID:
+            Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+          botoConfig: '{"user_agent_extra": "AwsSolution/SO0103/%%VERSION%%"}'
+      Code:
+        S3Bucket:
+          !Join [
+            "-",
+            [
+            !FindInMap ["SourceCode", "General", "S3Bucket"],
+            Ref: "AWS::Region",
+            ],
+          ]
+        S3Key:
+          !Join [
+            "/lambda/",
+            [
+            !FindInMap ["SourceCode", "General", "KeyPrefix"],
+            "TransferMiscConfigLambdaFunction.zip",
+            ],
+          ]
+      Handler: TransferMiscConfigLambdaFunction.lambda_handler
+      Runtime: python3.7
+      Timeout: 10
+      Role: !GetAtt CustomResourceLambdaExecutionRole.Arn
+
+Outputs:
+  StackArn:
+    Value:
+      Ref: AWS::StackId
+  TransferIdentityProviderUrl:
+    Description: URL to pass to AWS Transfer CreateServer call as part of optional IdentityProviderDetails
+    Value:
+      Fn::Join:
+        - ""
+        - - https://
+          - Ref: IdentityProviderApi
+          - .execute-api.
+          - Ref: AWS::Region
+          - .amazonaws.com/
+          - Ref: ApiStage
+  TransferIdentityProviderInvocationRole:
+    Description: IAM Role to pass to AWS Transfer CreateServer call as part of optional IdentityProviderDetails
+    Value:
+      Fn::GetAtt: TransferIdentityProviderRole.Arn
+  TransferVPCEndpointDNSEntry:
+    Description: Private DNS entry from the Transfer VPC endpoint. This will be used by the application running in Private subnet to interact with AWS Transfer endpoint.
+    Value:
+      Fn::GetAtt: TransferMiscConfigDetails.Data
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'TransferVPCEndpointDNSEntry' ] ]
+  JWTSecretKeyParameterARN:
+    Description: ARN of the parameter that stores JWT secret key. It will be used in later templates
+    Value:
+      Fn::GetAtt: TransferMiscConfigDetails.JWT_Secret_Key_Parameter_ARN
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'JWTSecretKeyParameterARN' ] ]
+  AWSTransferVPCSecGroup:
+    Description: AWS Transfer VPC security group.
+    Value: !Ref 'AWSTransferVPCSecGroup'
+    Export:
+      Name: !Join [ ':', [ !Ref 'AWS::StackName', 'AWSTransferVPCSecGroup' ] ]

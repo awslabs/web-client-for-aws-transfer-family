@@ -1,0 +1,166 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: (SO0103-website) %%SOLUTION_NAME%% - Static website hosting with S3 and CloudFront
+
+Parameters:
+
+  ACMCertificateARN:
+    Type: String
+    Description: ACM Certificate ARN that will be associated with the cloud front distribution (MUST BE FROM US_EAST_1)
+    Default: 'arn:aws:acm:us-east-1:<ACCT_ID>:certificate/99988822-5a2b-4e8e-aaf0-83d8deed4445'
+
+  CNameAlternateDomainName:
+    Type: String
+    Description: cloudfront distribution alternate domain name that matches R53 domain name for your user interface
+    Default: 'ui.mycompanydomain.com'
+
+  LambdaEdgeVersionARN:
+    Type: String
+    Description: ARN of Lambda@Edge function's version ARN to be used in CF distribution
+
+  HostedZoneId:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    Description: The Id of the hosted zone used to create an alias record for the cloudfront distribution.
+
+  VPCResourceStack:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: sftp-vpc-stack
+
+  FargateResourceStack:
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: "^[a-zA-Z][-a-zA-Z0-9]*$"
+    Default: sftp-fargate-stack
+
+Resources:
+
+  CloudfrontDistributionAliasRecordSet:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      AliasTarget: # https://docs.aws.amazon.com/Route53/latest/APIReference/API_AliasTarget.html
+        DNSName: !GetAtt CloudFrontDistribution.DomainName
+        EvaluateTargetHealth: False
+        HostedZoneId: Z2FDTNDATAQYW2 # Do not change this value.
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub '${CNameAlternateDomainName}'
+      Type: A
+
+  CloudFrontLogs:
+    Type: 'AWS::S3::Bucket'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W51
+            reason: "S3 bucket should likely have a bucket policy. It is a warning."
+          - id: W35
+            reason: "S3 Bucket should have access logging configured. It is a warning."
+    Properties:
+      BucketName:
+        Fn::Join:
+          - "-"
+          - - "cloudfront-logs"
+            - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: 'AES256'
+
+
+  # Configure the bucket as a CloudFront Origin
+  ReadPolicy:
+    Type: 'AWS::S3::BucketPolicy'
+    Properties:
+      Bucket:
+        Fn::ImportValue: !Join [':', [!Ref 'FargateResourceStack', 'SFTPWebClientBucket']]
+      PolicyDocument:
+        Statement:
+          - Action: 's3:GetObject'
+            Effect: Allow
+            Resource:
+              !Join ['', ['arn:aws:s3:::', Fn::ImportValue: !Join [':', [!Ref 'FargateResourceStack', 'SFTPWebClientBucket']], '/*']]
+            # Principal: '*'
+            # In an ideal scenario the policy would only grant these rights to CloudFront,
+            # we do not do it from scratch as many projects start without having a domain name specified
+            # and we want to test the code as soon as possible.
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
+
+  # Configure Access to CloudFroun
+  CloudFrontOriginAccessIdentity:
+    Type: 'AWS::CloudFront::CloudFrontOriginAccessIdentity'
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment:
+          Fn::ImportValue: !Join [':', [!Ref 'FargateResourceStack', 'SFTPWebClientBucket']]
+
+  # Configure CloudFront - https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/quickref-cloudfront.html
+  CloudFrontDistribution:
+    Type: 'AWS::CloudFront::Distribution'
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W70
+            reason: "Suppressing it even though we have TLS 1.2 protocol version configured."
+    Properties:
+      DistributionConfig:
+        ViewerCertificate:
+          AcmCertificateArn: !Ref ACMCertificateARN
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2019
+        Aliases:
+          - !Ref CNameAlternateDomainName
+        CustomErrorResponses:
+          - ErrorCode: 403 # not found
+            ResponseCode: 200
+            ResponsePagePath: '/index.html'
+        DefaultCacheBehavior:
+          AllowedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          CachedMethods:
+            - GET
+            - HEAD
+            - OPTIONS
+          OriginRequestPolicyId: '59781a5b-3903-41f3-afcb-af62929ccde1'
+          CachePolicyId: 'b2884449-e4de-46a7-ac36-70bc7f1ddd6d'
+          Compress: true
+          DefaultTTL: 3600 # in seconds
+          ForwardedValues:
+            Cookies:
+              Forward: none
+            QueryString: false
+          MaxTTL: 86400 # in seconds
+          MinTTL: 60 # in seconds
+          TargetOriginId: s3origin
+          ViewerProtocolPolicy: 'redirect-to-https'
+          LambdaFunctionAssociations:
+            - EventType: origin-response
+              LambdaFunctionARN: !Ref LambdaEdgeVersionARN
+        DefaultRootObject: '/index.html'
+        # Comment next three lines (147-149) if you are deploying in Cape Town (af-south-1), Hong Kong (ap-east-1), Milan (eu-south-1), or Bahrain (me-south-1)
+        Logging:
+          IncludeCookies: 'false'
+          Bucket: !Sub '${CloudFrontLogs}.s3.amazonaws.com'
+        Enabled: true
+        HttpVersion: http2
+        Origins:
+          - DomainName:
+              !Join ['.',[Fn::ImportValue: !Join [':', [!Ref 'FargateResourceStack', 'SFTPWebClientBucket']], 's3', Ref: AWS::Region ,'amazonaws.com']]
+            Id: s3origin
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub 'origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}'
+        PriceClass: 'PriceClass_All'
+
+Outputs:
+  DistributionId:
+    Description: 'CloudFront Distribution ID'
+    Value: !Ref CloudFrontDistribution
+  Domain:
+    Description: 'Cloudfront Domain'
+    Value: !GetAtt CloudFrontDistribution.DomainName
