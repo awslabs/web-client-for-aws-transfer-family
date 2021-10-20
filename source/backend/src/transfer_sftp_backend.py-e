@@ -1,0 +1,646 @@
+import datetime
+import os
+import logging
+import requests
+from flask import Flask
+from flask import jsonify, send_file, Response, after_this_request
+from flask_cors import CORS
+from flask_jwt_extended import (
+    JWTManager, jwt_required,get_jwt_identity, create_access_token, create_refresh_token, set_access_cookies, set_refresh_cookies, jwt_refresh_token_required
+)
+
+from auth_util import authenticate_request
+from kms_util import encrypt_username_password_boto
+from sftp_util import get_sftp_connection, create_sftp_connection
+
+import psutil
+from datetime import timedelta
+from flask import make_response, request, current_app
+from functools import update_wrapper
+import uuid
+import boto3
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+consoleHandler = logging.StreamHandler()
+consoleHandler.setLevel(logging.DEBUG)
+
+logger.addHandler(consoleHandler)
+
+formatter = logging.Formatter('%(name)s  %(levelname)s: %(message)s')
+consoleHandler.setFormatter(formatter)
+
+def crossdomain(origin=None, methods=None, headers=None, max_age=21600,
+                attach_to_all=True, automatic_options=True):
+    """Decorator function that allows crossdomain requests.
+      Courtesy of
+      https://blog.skyred.fi/articles/better-crossdomain-snippet-for-flask.html
+    """
+    if methods is not None:
+        methods = ', '.join(sorted(x.upper() for x in methods))
+    # use str instead of basestring if using Python 3.x
+    if headers is not None and not isinstance(headers, list):
+        headers = ', '.join(x.upper() for x in headers)
+    # use str instead of basestring if using Python 3.x
+    # if not isinstance(origin, String):
+    #     origin = ', '.join(origin)
+    if isinstance(max_age, timedelta):
+        max_age = max_age.total_seconds()
+
+    def get_methods():
+        """ Determines which methods are allowed
+        """
+        if methods is not None:
+            return methods
+
+        options_resp = current_app.make_default_options_response()
+        return options_resp.headers['allow']
+
+    def decorator(f):
+        """The decorator function
+        """
+        def wrapped_function(*args, **kwargs):
+            """Caries out the actual cross domain code
+            """
+            logger.debug(f'Request method: {request.method}')
+            if automatic_options and request.method == 'OPTIONS':
+                resp = current_app.make_default_options_response()
+            else:
+                resp = make_response(f(*args, **kwargs))
+            if not attach_to_all and request.method != 'OPTIONS':
+                return resp
+
+            h = resp.headers
+            h['Access-Control-Allow-Origin'] = origin
+            h['Access-Control-Allow-Methods'] = get_methods()
+            h['Access-Control-Max-Age'] = str(max_age)
+            h['Access-Control-Allow-Credentials'] = 'true'
+            h['Access-Control-Allow-Headers'] = \
+                "Origin, X-Requested-With, Content-Type, Accept, Authorization"
+            if headers is not None:
+                h['Access-Control-Allow-Headers'] = headers
+            return resp
+
+        f.provide_automatic_options = False
+        return update_wrapper(wrapped_function, f)
+    return decorator
+
+#from flask_wtf.csrf import CSRFProtect # TODO cookie
+
+#Setting SFTP endpoint from the environment variable
+env = os.getenv('sftp_hostname')
+if not env:
+    raise ValueError("SFTP Endpoint not found in env")
+else:
+    logger.debug(f'sftp_hostname: {env}')
+
+#Setting KMS Key ID from the environment variable
+kms_key_id = os.getenv('kms_key_id')
+if not kms_key_id:
+    raise ValueError("KMS Key ID not found in env")
+else:
+    logger.debug(f'kms_key_id: {kms_key_id}')
+
+#Setting JWT Secret Key from the environment variable
+jwt_secret_key = os.getenv('JWTSecretKey')
+if not jwt_secret_key:
+    raise ValueError("JWT Secret Key not found in env")
+else:
+    logger.debug(f'jwt_secret_key: {jwt_secret_key}')
+
+app = Flask(__name__)
+app.config["DEBUG"] = True
+app.config['sftp_hostname'] = env
+app.config['kms_key_id'] = kms_key_id
+app.config['front_end_CORS_origin'] = "https://sftpui.awslz.com"      # e.g. https://ui.mycompanydomain.com
+
+
+CORS(app, supports_credentials=True)
+#csrf = CSRFProtect(app) # TODO cookie
+
+app.config['JWT_TOKEN_LOCATION'] = ['cookies']
+
+# Set the cookie paths, so that you are only sending your access token
+# cookie to the access endpoints, and only sending your refresh token
+# to the refresh endpoint. Technically this is optional, but it is in
+# your best interest to not send additional cookies in the request if
+# they aren't needed.
+app.config['JWT_ACCESS_COOKIE_PATH'] = '/api/'
+app.config['JWT_REFRESH_COOKIE_PATH'] = '/token/refresh'
+
+# Disable CSRF protection for this example. In almost every case,
+# this is a bad idea. See examples/csrf_protection_with_cookies.py
+# for how safely store JWTs in cookies
+app.config['JWT_COOKIE_CSRF_PROTECT'] = True # TODO: Set this to true
+app.config['JWT_COOKIE_DOMAIN'] = "devsftp.awslz.com" # e.g. mycompanydomain.com
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = 3600
+
+# Set the secret key to sign the JWTs with
+app.config['JWT_SECRET_KEY'] = jwt_secret_key
+
+#------KKS Added -----
+app.config['JWT_COOKIE_SAMESITE'] = 'None'
+app.config['JWT_COOKIE_SECURE'] = True
+
+jwt = JWTManager(app)
+cw = boto3.client('cloudwatch')
+
+@app.route('/healthcheck', methods=['GET',])
+def health_check():
+    response = jsonify({'message': "Health check executed."})
+    response.status_code = 200
+
+    #Get Fargate Task ARN -   # TODO - Remove logger.info statements
+    fargate_task_metadata_path =  os.getenv('ECS_CONTAINER_METADATA_URI_V4')
+    resp = requests.get(fargate_task_metadata_path + "/task").json()
+    fargate_task_arn = resp.get('TaskARN')
+    cluster_arn = resp.get('Cluster')
+    # logger.debug(f'fargate_task_arn: {fargate_task_arn}')
+    fargate_ephemeral_space = psutil.disk_usage('/var/sftp-upload-scratch-space').free
+    # logger.debug(f'fargate task total space:: {fargate_ephemeral_space}')
+
+    Dimension = {
+        'Name': 'Fargate_Task',
+        'Value': fargate_task_arn
+    }
+
+    cw_args = {
+        'Namespace': 'ECS',
+        'MetricData': [
+            {
+                'MetricName': 'Fargate Task Ephemeral Storage',
+                'Dimensions': [Dimension],
+                'Value': fargate_ephemeral_space,
+                'Unit': 'Count',
+                'StorageResolution': 1
+            }
+        ]
+    }
+    try:
+        cw_resp = cw.put_metric_data(**cw_args)
+        # logger.debug(f'finished writing metric data: {cw_resp}')
+    except Exception as e:
+        logger.debug(f'health_check(): error calling /healthcheck : {e}')
+
+    #logger.debug(f'health_check(): health check response: {response}')
+
+    return response
+
+@app.route('/api/isconnected', methods=['GET',])
+@jwt_required
+def isconnected():
+    response = jsonify({'message': "API is connected."})
+    # logger.debug(f'isconnected(): response: {response}')
+    response.status_code = 200
+
+    return response
+
+@app.route('/api/authenticate', methods=['POST', 'OPTIONS'])
+@crossdomain(origin=app.config['front_end_CORS_origin'])
+def authenticate():
+    try:
+       # logger.debug(f'******* entering /api/authenticate:')
+
+        sftp_hostname = app.config.get('sftp_hostname')
+        usr, passwdorpkey = authenticate_request(request)
+
+        sftp_connection = create_sftp_connection(usr, passwdorpkey, sftp_hostname)
+        res = type(sftp_connection).__name__
+
+        if res == 'SFTPClient':
+            response = jsonify({'message': "Authentication successful."})
+            response.status_code = 200
+            logger.debug(f'authenticate(): call to /api/authenticate returned 200')
+        elif res == 'AuthenticationException':
+            response = jsonify({'message': "Authentication Failed"})
+            response.status_code = 401
+            logger.debug(f'authenticate(): call to /api/authenticate returned 401')
+        else:
+            response = jsonify({'message': "Network/Socket Error occurred"})
+            response.status_code = 403  # this is arbitrary code
+            logger.debug(f'authenticate(): call to /api/authenticate returned 403')
+
+    except Exception as e:
+        logger.debug(f'authenticate(): call to /api/authenticate returned exception {e}')
+        return bad_request()
+
+    access_token = create_access_token(identity=encrypt_username_password_boto(usr+"||"+passwdorpkey, kms_key_id))
+    refresh_token = create_refresh_token(identity=encrypt_username_password_boto(usr+"||"+passwdorpkey, kms_key_id))
+
+    # We still need to call these functions to set the
+    # JWTs in the cookies
+    set_access_cookies(response, access_token, 3600)
+    set_refresh_cookies(response, refresh_token, 3600)
+
+    return response
+
+'''
+@app.route('/token/refresh', methods=['POST'])
+@jwt_refresh_token_required
+def refresh():
+    # Create the new access token
+    current_user = get_jwt_identity()
+    logger.info(current_user)
+    access_token = create_access_token(identity=current_user)
+
+    # Set the JWT access cookie in the response
+    resp = jsonify({'refresh': True})
+    set_access_cookies(resp, access_token)
+    return resp, 200
+'''
+
+# @jwt.unauthorized_loader
+# def my_invalid_token_callback(expired_token):
+#     logger.info(expired_token)
+#     return render_template('401.html', title='Home')
+
+@app.route('/api/listchildnodes', methods=['POST'])
+@jwt_required
+def list_child_nodes():
+    try:
+        # TODO - Remove logger.info statements
+        logger.debug(f'list_child_nodes(): jwt_identity: {get_jwt_identity()}')
+        sftp_hostname = app.config.get('sftp_hostname')
+        usr, passwdorpkey = authenticate_request(request)
+        response_body = {}
+
+        request_data = request.get_json()
+        node_name = request_data['node_name']  # what is parent node
+        node_type = request_data['node_type']  # do we want folders or non-folders
+        response_body['data'] = []
+
+        sftp_connection = get_sftp_connection(usr, passwdorpkey, sftp_hostname)
+        nodes = sftp_connection.listdir_attr(node_name)
+
+        for node in nodes:
+            if node_type =="folder" and node.longname[:1] == "d":  # if folder node
+                response_body['data'].append(
+                    {
+                        'label': node.filename,
+                        'data': node_name + "/" + node.filename,
+                        'leaf': False,
+                        'key': node_name + "/" + node.filename, # for react js
+                    }
+                )
+            elif node_type =="file" and node.longname[:1] == "-":
+                response_body['data'].append(
+                    {
+                        'name': node.filename,
+                        'data': node_name + "/" + node.filename,
+                        'leaf': True,
+                        'type': node.filename.rsplit(".", 1)[1],
+                        'size': round(node.st_size/1024, 2),
+                        'last_accessed_on': datetime.datetime.fromtimestamp(node.st_atime).strftime('%Y-%m-%d %H:%M:%S'),
+                        'last_modified_on': datetime.datetime.fromtimestamp(node.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                )
+
+        response = jsonify(response_body)
+        response.status_code = 200
+
+    except Exception as e:
+        return bad_request()
+
+    return response
+
+@app.route('/api/numberofchildnodes', methods=['POST'])
+@jwt_required
+def number_of_child_nodes():
+    try:
+        sftp_hostname = app.config.get('sftp_hostname')
+        usr, passwdorpkey = authenticate_request(request)
+        response_body = {}
+
+        request_data = request.get_json()
+        node_name = request_data['node_name']  # what is parent node
+        response_body['data'] = []
+
+        sftp_connection = get_sftp_connection(usr, passwdorpkey, sftp_hostname)
+
+        nodes = sftp_connection.listdir_attr(node_name)
+        number_of_nodes = len(nodes)
+
+        #Return number of files within a folder
+        response_body['data'].append(
+            {
+                'number_of_nodes': number_of_nodes
+            }
+        )
+
+        response = jsonify(response_body)
+        response.status_code = 200
+
+    except Exception as e:
+        return bad_request()
+
+    return response
+
+
+# SFTP Upload operation
+# https://werkzeug.palletsprojects.com/en/1.0.x/datastructures/#werkzeug.datastructures.FileStorage
+@app.route('/api/upload', methods=['POST'])
+@jwt_required
+def upload():
+    try:
+        sftp_hostname = app.config.get('sftp_hostname')
+        usr, passwd = authenticate_request(request)
+
+        response_body = {}
+
+        upload_scratch_space_path = '/var/sftp-upload-scratch-space'
+
+        # TODO - Remove logger.info statements
+        if (os.path.exists(upload_scratch_space_path) == False):
+            #logger.info(f'upload scratch path {upload_scratch_space_path} does not exist. Creating it ')
+            os.mkdir(upload_scratch_space_path)
+            #logger.info(f'created the {upload_scratch_space_path} path')
+        else:
+            #logger.info(f'upload scratch path {upload_scratch_space_path} exists ')
+            listfolders = os.listdir(upload_scratch_space_path)
+            logger.info(f'List of existing folders (should be empty) : {listfolders} ')
+
+        # create unique temp path for the file
+        temppath = upload_scratch_space_path + '/' + str(uuid.uuid4().hex) + '_' + str(
+            datetime.datetime.utcnow().timestamp()).replace('.', '_')
+        logger.info(f'upload temp path to be created : {temppath}')
+        if (os.path.exists(temppath)):
+            #logger.info('upload temp path already exists')
+            os.rmdir(temppath)
+            #logger.info('deleted the existing upload temp path')
+            os.mkdir(temppath)
+            #logger.info('created the upload temp path again')
+        else:
+            #logger.info('upload temp path does not exists. Creating new one')
+            os.mkdir(temppath)
+
+        file = request.files.get("filetoupload")
+        filename = file.filename
+        #Saving the file to fargate task scratch space
+        file.save(os.path.join(temppath, filename))
+
+        form_data = request.form.to_dict(flat=False)
+        file_path = form_data['file_path'][0]
+        filetouploadname = file_path + "/" + filename
+
+        #Making SFTP Connection
+        sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+        #Uploading the file to SFTP endpoint, from fargate task scratch space
+        #logger.info('Uploading the file to SFTP endpoint, from fargate task scratch space')
+        upload_file_response = sftp_connection.put(os.path.join(temppath, filename), filetouploadname)
+
+        # Remove the temp path and the file from the local storage after it is uploaded to the SFTP endpoint
+        #logger.info('file uploaded to the SFTP server')
+        os.remove(os.path.join(temppath, filename))
+        #logger.info('upload temp path file deleted')
+        os.rmdir(temppath)
+        #logger.info('upload temp path deleted')
+
+        response_body['file_permission'] = str(upload_file_response)
+        response_body['message'] = "File uploaded successfully."
+
+        response = jsonify(response_body)
+        response.status_code = 200
+
+    except Exception as e:
+        return internal_error('Upload operation error occurred : %s: %s' % (e.__class__, e))
+
+    return response
+
+
+@app.route('/api/download', methods=['POST'])
+@jwt_required
+def download():
+    print("Trying to download")
+    sftp_hostname = app.config.get('sftp_hostname')
+    usr, passwd = authenticate_request(request)
+
+    request_data = request.get_json()
+
+    filepath = request_data['path']
+    logger.debug(f'File Path: {filepath}')
+    filename = str(filepath).split('/')[-1]  # Returns the filename
+
+    try:
+        sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+        download_scratch_space_path = '/var/sftp-download-scratch-space'
+
+        # TODO - Remove logger.info statements
+        if (os.path.exists(download_scratch_space_path) == False):
+            #logger.info(f'download scratch path {download_scratch_space_path} does not exist. Creating it ')
+            os.mkdir(download_scratch_space_path)
+            #logger.info(f'created the {download_scratch_space_path} path')
+        else:
+            #logger.info(f'download scratch path {download_scratch_space_path} exists ')
+            listfolders = os.listdir(download_scratch_space_path)
+            #logger.info(f'List of existing folders (should be empty) : {listfolders} ')
+
+        # create unique temp path for the file
+        temppath = download_scratch_space_path + '/' + str(uuid.uuid4().hex) + '_' + str(
+            datetime.datetime.utcnow().timestamp()).replace('.', '_')
+        #logger.info(f'temp path to be created : {temppath}')
+        if (os.path.exists(temppath)):
+            #logger.info('download temp path already exists')
+            os.rmdir(temppath)
+            #logger.info('deleted the existing download temp path')
+            os.mkdir(temppath)
+            #logger.info('created the download temp path again')
+        else:
+            #logger.info('download temp path does not exists. Creating new one')
+            os.mkdir(temppath)
+
+        remote_path = filepath
+        local_path = temppath + "/" + filename
+        # Getting file from SFTP endpoint
+        sftp_connection.get(remote_path, local_path, callback=None)
+
+        # TODO - Remove logger.info statements
+        #logger.info(f'sending file : remote path: {remote_path} local_path: {local_path}')
+
+        # Remove the temp path and the file from the local storage after it is sent to the client
+        @after_this_request
+        def remove_temp_path(response):
+            try:
+                #logger.info('file served to the client')
+                os.remove(local_path)
+                #logger.info('temp path file deleted')
+                os.rmdir(temppath)
+                #logger.info('temp path deleted')
+            except Exception as e:
+                return internal_error(
+                    'Download operation after_this_request error occurred : %s: %s' % (e.__class__, e))
+            return response
+
+        return send_file(local_path, as_attachment=True, attachment_filename=filename)
+
+    except Exception as e:
+        print("Error", e)
+        return internal_error('Download operation error occurred : %s: %s' % (e.__class__, e))
+
+
+# TODO - Remove this function
+@app.route('/api/download_stream', methods=['POST'])
+@jwt_required
+def download_stream():
+    sftp_hostname = app.config.get('sftp_hostname')
+    usr, passwd = authenticate_request(request)
+
+    request_data = request.get_json()
+    '''
+    filepath = request_data['path']
+    logger.info("FilePath: " + str(filepath))
+    filename = str(filepath).split('/')[-1] # Returns the filename
+
+    try:
+        sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+
+        remote_path = filepath
+        local_path = filename
+        sftp_connection.get(remote_path, local_path, callback=None)
+
+        # TODO - Remove logger.info statements
+        logger.info("sending file", remote_path, local_path)
+
+        return send_file(local_path, as_attachment=True, attachment_filename =filename)
+
+    except Exception as e:
+        return internal_error('Download operation error occurred : %s: %s' % (e.__class__, e))
+    '''
+    filepath = request_data['path']
+
+    filename = str(filepath).split('/')[-1]  # Returns the filename
+
+    sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+    remote_path = filepath
+    logger.info(f'FilePath: {remote_path}')
+
+    def generate():
+        remote_file = sftp_connection.open(remote_path, "rb")
+        for data in remote_file:
+            logger.info(data)
+            yield data
+        remote_file.close()
+
+    return Response(generate())
+
+    # return send_file(local_path, as_attachment=True, attachment_filename=filename)
+
+@app.route('/api/delete', methods=['POST'])
+@jwt_required
+def delete():
+    sftp_hostname = app.config.get('sftp_hostname')
+    usr, passwd = authenticate_request(request)
+
+    response_body = {}
+
+    request_data = request.get_json()
+    node_name = request_data['node_name'] # path
+    node_type = request_data['node_type'] # do we want folders or non-folders
+
+    try:
+        sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+
+        if node_type == "folder":
+            sftp_connection.rmdir(node_name)
+            response_body['message'] = "Folder deleted successfully."
+
+        elif node_type == "file":
+            rmfile = sftp_connection.remove(node_name)
+            response_body['message'] = "File deleted successfully."
+
+        response = jsonify(response_body)
+        response.status_code = 200
+
+    except Exception as e:
+        return internal_error('Delete operation error occurred : %s: %s' % (e.__class__, e))
+
+    return response
+
+
+@app.route('/api/rename', methods=['POST'])
+@jwt_required
+def rename():
+    sftp_hostname = app.config.get('sftp_hostname')
+    usr, passwd = authenticate_request(request)
+
+    response_body = {}
+
+    request_data = request.get_json()
+    node_type = request_data['node_type']
+    current_path = request_data['current_path']
+    new_path = request_data['new_path']
+
+    try:
+        if node_type == "folder":
+            return bad_request('cant rename a folder')  # cant rename a direcory
+
+        elif node_type == "file":
+            sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+            sftp_connection.rename(current_path,new_path)
+            response_body['message'] = "File renamed successfully."
+            response_body['new_path'] = new_path
+            response_body['new_name'] = new_path[new_path.rfind('/')+1:]
+
+        response = jsonify(response_body)
+        response.status_code = 200
+
+    except Exception as e:
+        return internal_error('Rename operation error occurred : %s: %s' % (e.__class__, e))
+
+    return response
+
+
+@app.route('/api/createfolder', methods=['POST'])
+@jwt_required
+def create_folder():
+    sftp_hostname = app.config.get('sftp_hostname')
+    usr, passwd = authenticate_request(request)
+
+    response_body = {}
+
+    request_data = request.get_json()
+    node_type = request_data['node_type']
+    new_folder_path = request_data['new_node_path']
+
+    try:
+        if node_type == "folder":
+            sftp_connection = get_sftp_connection(usr, passwd, sftp_hostname)
+
+            sftp_connection.mkdir(new_folder_path, 511)
+            response_body['message'] = "Folder created successfully."
+
+        response = jsonify(response_body)
+        response.status_code = 200
+
+    except Exception as e:
+        return internal_error('Create folder operation error occurred : %s: %s' % (e.__class__, e))
+
+    return response
+
+
+@app.errorhandler(400)
+def bad_request(error=None):
+    message = {
+        'status': 400,
+        'message': 'Invalid request: ' + error
+    }
+    resp = jsonify(message)
+    resp.status_code = 400
+
+    return resp
+
+
+@app.errorhandler(500)
+def internal_error(error=None):
+    message = {
+        'status': 500,
+        'message': 'Internal server error: ' + error
+    }
+    resp = jsonify(message)
+    resp.status_code = 404
+
+    return resp
+
+# app.run()
+if __name__ == "__main__":
+    app.run(host='0.0.0.0', port=8042)
