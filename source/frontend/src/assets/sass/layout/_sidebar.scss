@@ -1,0 +1,78 @@
+.layout-wrapper {
+    .layout-sidebar {
+        position: fixed;
+        width: 240px;
+        height: 100%;
+        top: 64px;
+        left: -240px;
+        z-index: 999;
+        border-right: 2px dotted $sidebarBorderColor;
+        @include transition(left $sidebarAnimationDuration);
+
+        .ui-scrollpanel {
+            background-color: $sidebarBgColor;
+
+            .ui-scrollpanel-bar {
+                background-color: $sidebarBgColor;
+                opacity: .3;
+            }
+
+            .layout-menu {
+                padding-bottom: 120px;
+            }
+        }
+
+        .layout-menu {
+            list-style-type: none;
+            margin: 10px 0 0 0;
+            padding: 0;
+            width: 258px;
+
+            li {
+                padding: 0;
+                width: 100%;
+
+                a {
+                    display: block;
+                    padding: .5em 1em;
+                    position: relative;
+
+                    > .menuitem-text {
+                        display: inline-block;
+                        word-break: break-all;
+                    }
+
+                    i {
+                        @include transition(.3s);
+                        transition: 0.3s;
+                        float: right;
+                        margin-right: 0.85em;
+                    }
+                }
+
+                &.active-menuitem {
+                    > a {
+                        .layout-submenu-toggler {
+                            -webkit-transform: rotate(-180deg);
+                            -moz-transform: rotate(-180deg);
+                            -o-transform: rotate(-180deg);
+                            -ms-transform: rotate(-180deg);
+                            transform: rotate(-180deg);
+                        }
+                    }
+                }
+
+                ul {
+                    overflow: hidden;
+                    list-style-type: none;
+                    margin: 0;
+                    padding-left: 1em;
+                }
+            }
+        }
+
+        &.layout-sidebar-active {
+            left: 0;
+        }
+    }
+}
