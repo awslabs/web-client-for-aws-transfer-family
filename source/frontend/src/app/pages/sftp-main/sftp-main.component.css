@@ -1,0 +1,38 @@
+/*Comment this out when not debugging layouts*/
+.ui-g div {
+  background-color: #ededed;
+  text-align: center;
+  border: 1px solid #fafafa;
+}
+
+.p-grid div {
+  background-color: #ededed;
+  text-align: center;
+  border: 1px solid #fafafa;
+}
+/*END Comment this out when not debugging layouts*/
+
+
+h4 {
+  text-align: center;
+  margin: 0 0 8px 0;
+}
+.ui-inputtext {
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12px;
+}
+:host ::ng-deep .ui-toast {
+  top: 80px;
+}
+:host ::ng-deep .news-active .ui-toast {
+  top: 150px;
+}
+@media screen and (max-width: 64em) {
+  :host ::ng-deep .ui-toast {
+    top: 110px;
+  }
+  :host ::ng-deep .news-active .ui-toast {
+    top: 180px;
+  }
+}

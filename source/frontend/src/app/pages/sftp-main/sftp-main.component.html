@@ -1,0 +1,214 @@
+<div class="all_container" class="flex-column h-100 w-100 bg-gray-200">
+
+    <p-messages [(value)]="msgs"></p-messages>
+    <p-messages severity="success" *ngIf="file_downloading">
+        <ng-template pTemplate>
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg> &nbsp;Downloading File. Please wait...
+        </ng-template>
+    </p-messages>
+
+    <nav class="flex justify-between py-3 px-2 bg-gray-800 text-white">
+
+        <div class="flex items-center w-1/3">
+
+            <img class="inline w-8 rounded-full mx-3" src="assets/images/logo.png" /><span class="text-lg pr-2 font-bold">{{site_name}}</span><span class="text-sm  text-gray-600 px-2">{{tag_line}}</span>
+
+        </div>
+
+        <div class="w-1/3 flex justify-end items-center">
+            <span *ngIf="health_ok" class="text-base">
+
+            <button (click)="deleteConnection()" class="text-base online bg-none mr-4" href="#"><i
+                    class="fas fa-sign-out-alt text-red-600"
+                    ></i>&nbsp;Log out &nbsp;</button>
+            </span>
+        </div>
+    </nav>
+
+    <div *ngIf="page=='settings'" class="w-100 content-center">
+
+        <div class="container-fluid w-2/5 bg-white rounded-xl mt-8">
+
+            <div class="row">
+                <div class="col-12">
+
+                    <h5 class="text-gray-700 font-bold px-3 pt-8 text-lg">Connection Settings</h5>
+
+                    <form #settingsForm="ngForm" (ngSubmit)="onSubmit()" class="p-3" novalidate>
+
+                        <div class="ui-float-label  py-6">
+                            <input [(ngModel)]="username" placeholder="Username"  name="username" pInputText
+                                   type="text" value="{{username}}" class="text-base p-6 w-100 rounded-xl bg-gray-200">
+                        </div>
+
+                        <div class="ui-float-label py-6">
+                            <input [(ngModel)]="password" placeholder="Password"  class="text-lg" name="password" pPassword
+                                   type="password" class="text-base p-6 w-100 rounded-xl bg-gray-200">
+                            
+                        </div>
+
+                        <div class="py-4">
+                            <div *ngIf="!isConnectionTested && connError" class="alert alert-danger" role="alert">
+                                {{login_error}}
+                            </div>
+                            <button [disabled]="login_process" class="btn btn-primary di" id="connect" label="Connect" type="submit">
+                                <svg *ngIf="login_process" class="animate-spin -ml-1 mr-3 h-5 w-5 text-white float-left" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                  &nbsp;
+                                  <span class="float-right">Log in</span></button>
+
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="flex p-2 h-full">
+        <as-split #split="asSplit" *ngIf="page == 'browse'"  [gutterSize]=3 class="rounded-xl bg-white" unit="percent">
+            <as-split-area #area1="asSplitArea" [size]="25">
+                <div class="flex px-4 py-3 justify-between border-b border-gray-200 shadow-inner">
+                    <div class="flex text-l text-bg-900 font-bold items-center">
+                        Folders
+                    </div>
+                </div>
+                <div class="flex justify-start p-3 h-auto w-full">
+                    <p-tree (onNodeExpand)="onFolderPathExpand($event)" (onNodeSelect)="onFolderPathSelect($event)" [loading]="loading" [value]="parentNodes" class="h-full w-full truncate overflow-ellipsis" selectionMode="single">
+                    </p-tree>
+                </div>
+            </as-split-area>
+            <as-split-area #area2="asSplitArea" [size]="75" class="bg-white">
+                <div *ngIf="currentFolderPath != null" class="flex px-4 py-3 h-16 justify-between">
+                    <div class="w-4/5 flex justify-start items-center">
+                        <p-breadcrumb (onItemClick)="onBreadCrumbClick($event)" [home]="home" [model]="items">
+                        </p-breadcrumb>
+                    </div>
+                </div>
+                <div *ngIf="currentFolderPath != null" class="flex px-4 py-0 pb-4 justify-between border-b border-gray-200">
+                    <div class="font-bold text-xl w-1/2 pt-2 flex justify-start items-center">
+                        <i class="fas fa-folder-open text-yellow-500"></i>&nbsp; <div class="truncate overflow-ellipsis inline-block">{{current_folder.label}}</div> ({{filesForPath.length}}&nbsp;files)
+                    </div>
+                    <div class="flex items-center">
+                        <p-dialog [(visible)]="upload_dialog_display" header="Upload File" position="top">
+                            <div style="min-width:600px;min-height:400px;">
+
+                                <p-fileUpload #fileUploader
+                                              (onUpload)="onUpload($event)"
+                                              (uploadHandler)="uploadFile($event,fileUploader)"
+                                              [files]="myfiles" [customUpload]="true"
+                                              method="POST" mode="advanced" name="filename">
+                                    <ng-template pTemplate="content">
+                                        <div style="border:1px dashed grey;height:100%;position: relative;">
+                                           <div style="position: absolute; top: 10%; left: 10%">
+                                               Drag a <b>single</b> file within this bordered area to queue for upload
+                                               or press "+ Choose" button.
+                                               <br/>NOTE: only single file support at the moment.
+                                           </div>
+                                        </div>
+                                    </ng-template>
+
+                                </p-fileUpload>
+
+                            </div>
+                            <p-progressBar [ngStyle]="{'visibility':file_uploading==true ? 'visible' : 'hidden'}" mode="indeterminate"></p-progressBar>
+                        </p-dialog>
+                        <p-dialog [(visible)]="displayFolderDialog" header="Add New Folder" position="top">
+                            <div style="min-width:300px;">
+                                {{currentFolderPath}} / <input [(ngModel)]="newFolderInputText" class="border-2" type="text" /> /
+                                <br><br>
+                                <button (click)="newFolderCreate()" [disabled]="newFolderInputText == undefined" class="bg-none border border-red-600 p-2 w-auto h-auto rounded text-gray-800 text-sm mr-2"><i
+                                        class="fas fa-folder-plus text-base mr-2 text-yellow-500"></i>Add Folder
+                                </button>
+                            </div>
+                        </p-dialog>
+
+<!--                        <button-->
+<!--                                class="bg-none border border-red-600 p-2 w-auto h-auto rounded text-gray-800 text-sm mr-2">-->
+<!--                            <i class="fa fa-refresh text-sm text-green-600 mr-2"></i>Refresh-->
+<!--                        </button>-->
+
+                        <button (click)="showUploadDialog()"
+                                class="bg-none border border-green-600 p-2 w-auto h-auto rounded text-gray-800 text-sm mr-2">
+                            <i class="fa fa-upload text-sm text-green-600 mr-2"></i>Upload
+                        </button>
+
+                        <button (click)="deleteFolder()"
+                                [disabled]="this.btnDeleteFolderDisabled"
+                                [class.green]="btnDeleteFolderDisabled"
+                                class="bg-none border border-red-600 p-2 w-auto h-auto rounded text-gray-800 text-sm mr-2">
+                                    <i class="fas fa-trash text-sm text-red-600 mr-2"></i>Delete Folder
+                        </button>
+                        <button (click)="displayNewFolderDialog()" class="bg-none border border-yellow-600 p-2 px-2 w-auto h-auto rounded text-gray-800 text-sm"><i
+                                class="fas fa-folder-plus text-base mr-2 text-yellow-500"></i>Add Sub Folder
+                        </button>
+                    </div>
+                </div>
+
+
+                <div *ngIf="currentFolderPath != null" class="flex p-3 px-6">
+                    <p-table #dt (onEditCancel)="onEditCancel($event)" styleClass="p-datatable-striped" (onEditComplete)="onEditComplete($event)" (onEditInit)="onEditInit($event)" [(selection)]="selectedFile" [globalFilterFields]="['name']" [loading]="loading_table" [paginator]="true" [rowsPerPageOptions]="[5,10,20,30]"
+                        [resizableColumns]="true" [rows]="5" [value]="filesForPath" class="h-1/2" selectionMode="single">
+                        <ng-template pTemplate="header">
+                            <tr>
+                                <th pSortableColumn="name" class="w-1/3">File Name
+                                    <p-sortIcon field="name"></p-sortIcon>
+                                </th>
+                                <th pSortableColumn="type">File Type
+                                    <p-sortIcon field="type"></p-sortIcon>
+                                </th>
+                                <th pSortableColumn="size">File Size
+                                    <p-sortIcon field="size"></p-sortIcon>
+                                </th>
+
+                                <th pSortableColumn="size">Last Modified
+                                    <p-sortIcon field="size"></p-sortIcon>
+                                </th>
+                                <th class="flex justify-end pr-0">
+
+                                    <div class="border-b-2 p-2 flex bg-white mr-2 justify-center items-center">
+                                        <i class="fas fa-search text-gray-500 mr-2"></i>
+                                        <input (input)="applyFilterGlobal($event, 'contains')" class="  m-0 border-none text-base" pInputText placeholder="Search" type="text" />
+                                    </div>
+                                </th>
+                            </tr>
+                        </ng-template>
+
+                        <ng-template let-file let-rowData pTemplate="body">
+                            <tr [pSelectableRow]="rowData" class="f" class="row-data-name">
+                                <td [pEditableColumnField]="rowData.name" [pEditableColumn]="rowData">
+                                    <p-cellEditor>
+                                        <ng-template pTemplate="input">
+                                            <input [(ngModel)]="rowData.name" pInputText type="text">
+                                        </ng-template>
+                                        <ng-template pTemplate="output">
+                                            <div pTooltip="{{rowData.name}}" tooltipPosition="top" tooltipEvent="hover" class="text-base truncate overflow-ellipsis border-b-0 border-dotted py-2 border-gray-700"><i class="row-data-edit fas fa-pen text-green-500"></i>
+                                                <i class="row-data-icon fas {{getDocIcon(rowData.name)}} text-{{getDocIconColor(rowData.name)}}-700  "></i> &nbsp;{{rowData.name}}
+                                            </div>
+                                        </ng-template>
+                                    </p-cellEditor>
+                                </td>
+                                <td>{{file.type}}</td>
+                                <td><div class="absolute invisible">{{file.size}}</div>{{getFileSize(file.size)}}</td>
+                                <td>{{file.last_modified_on | date:'MM/dd/yyyy h:mm a'}}</td>
+                                <td class="p-0 text-right">
+                                    <button pTooltip="Download File" tooltipPosition="left" tooltipEvent="hover" (click)="selectFileForDownload(rowData)" class="bg-transparent border-none rounded p-2 mr-4"><i
+                                            class="fa fa-download text-green-600"></i></button>
+                                    <button pTooltip="Delete File" tooltipPosition="left" tooltipEvent="hover" (click)="deleteFile(rowData)" class="bg-transparent border-none rounded p-2"><i class="fa fa-trash text-red-600"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </ng-template>
+
+                    </p-table>
+
+                </div>
+            </as-split-area>
+        </as-split>
+
+    </div>
+</div>
