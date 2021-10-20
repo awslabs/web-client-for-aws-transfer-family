@@ -7,7 +7,7 @@ The solution supports common file operations such as Upload, Download, Rename an
 
 
 
-###Uploading and Downloading large files
+### Uploading and Downloading large files
 The Gunicorn connection timeout is set to 600 seconds for sync workers. In order to upload and download files of large sizes, you can adjust the timeout value to be set at higher interval. This could be done by modifying the Dockerfile (from your local clone of the project under `dist/source/backend/Dockerfile` path), line#43:
 
 ````
