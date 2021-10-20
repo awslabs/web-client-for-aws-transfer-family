@@ -1,1 +1,25 @@
-Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Web Client for AWS Transfer Family
+Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Licensed under the Apache License Version 2.0 (the "License"). You may not use this file except
+in compliance with the License. A copy of the License is located at http://www.apache.org/licenses/
+or in the "license" file accompanying this file. This file is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+**********************
+THIRD PARTY COMPONENTS
+**********************
+This software includes third party software subject to the following copyrights:
+
+AWS SDK under the Apache License Version 2.0
+Paramiko under the GNU LESSER GENERAL PUBLIC LICENSE
+Flask under the BSD License
+Flask-JWT-Extended under the MIT License
+Gunicorn under the MIT License
+Cachetools under the MIT License
+Flask-Cors under the MIT License
+requests under the Apache License
+Angular Framework under the MIT License
+NodeJS under the MIT License
+PrimeNg under the MIT License
+Tailwindcss under the MIT License
