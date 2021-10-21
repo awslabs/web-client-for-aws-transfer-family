@@ -2,8 +2,7 @@
 AWS customers are looking for ways to provide simple browser-based user interfaces to their corporate SFTP environments. Many of their non-technical users find it inconvenient to use thick client tools such as FileZilla and others. Moreover, many customers do not want to install and support different clients on various end user devices and operating systems. By adopting an intuitive and browser-based solution they reduce the effort of managing commercial or open-source client and having to troubleshoot different end-user devices and operating systems. 
 The solution supports common file operations such as Upload, Download, Rename and Delete.
 
-* Change the title in this README
-* Edit your repository description on GitHub
+You can find step-by-step implementation guide to deploy this solution here: https://aws.amazon.com/solutions/implementations/web-client-for-aws-transfer-family/?did=sl_card&trk=sl_card
 
 
 
