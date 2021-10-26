@@ -131,7 +131,7 @@ and deploy Web Client for AWS Transfer Family into your account.
      >**NOTE: we are using NodeJS 14.15 along with Angular 12 and related libraries.**
      - Install Node Version Manager: 
        ```shell
-       curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash`
+       curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
        . ~/.nvm/nvm.sh
        ```
      - Install NodeJS version 14.15: 
