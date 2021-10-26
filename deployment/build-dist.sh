@@ -19,8 +19,7 @@
 # Check to see if input has been provided:
 if [ -z "$1" ] || [ -z "$2" ] || [ -z "$3" ]; then
     echo "Please provide the base source bucket name, trademark approved solution name and version where the lambda code will eventually reside."
-    echo "For example: ./build-dist.sh solutions web-client-for-aws-transfer-family v1.0.0
-"
+    echo "For example: ./build-dist.sh solutions web-client-for-aws-transfer-family v1.0.0"
     exit 1
 fi
 
