@@ -44,7 +44,7 @@ echo "--------------------------------------------------------------------------
 echo "[Packing] Copy local repo to $dist_dir"
 echo "------------------------------------------------------------------------------"
 #cp -R $root_dir/ $dist_dir/
-rsync -a --exclude $dist_dir $root_dir/ $dist_dir
+rsync -a --exclude $dist_dir --exclude .git $root_dir/ $dist_dir
 
 echo "------------------------------------------------------------------------------"
 echo "Updating code source bucket in template with $1"
