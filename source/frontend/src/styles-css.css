@@ -1,0 +1,227 @@
+/* You can add global styles to this file, and also import other style files */
+
+html,
+body {
+    height: 100%;
+    background: #fff;
+}
+
+body .ui-tree {
+    border: 0px solid #c8c8c8 !important;
+    background-color: #ffffff;
+    color: #333333;
+    padding: 0;
+    width: 100%;
+    overflow: auto;
+}
+
+body .pi {
+    font-size: unset;
+    /* margin-top: 2px; */
+}
+
+body .ui-breadcrumb ul li.ui-breadcrumb-chevron {
+    margin: 0.20em 0.5em 0 0.5em;
+    color: #848484;
+}
+
+body .ui-breadcrumb {}
+
+.ui-table .ui-paginator-bottom {
+    margin-top: 12px;
+}
+
+body .ui-table .ui-table-tbody>tr.ui-state-highlight {
+    background-color: #f2f2f2;
+    color: #000;
+}
+
+.ui-treenode-icon {
+    color: #F7C805 !important;
+    font-size: 14px;
+}
+
+body .ui-fileupload .ui-fileupload-buttonbar {
+    border: 0px;
+    text-align: end;
+    background: #fff
+}
+
+body .ui-fileupload .ui-fileupload-content {
+    border: 0px;
+    height: 300px;
+}
+
+body .ui-table .ui-table-tbody>tr>td {
+    border: 0px;
+}
+
+body .ui-table .ui-table-caption,
+body .ui-table .ui-table-summary {
+    border: 0px;
+    background: #fff;
+}
+
+body .ui-table .ui-table-thead>tr>th {
+    border: 0px;
+    border-bottom: solid 1px #f2f2f2;
+    background: #fff;
+}
+
+body .ui-tree .ui-tree-container .ui-treenode .ui-treenode-content .ui-treenode-label {
+    font-size: 15px;
+    /* font-weight: bold; */
+}
+
+::-webkit-scrollbar {
+    -webkit-appearance: none;
+    width: 7px;
+}
+
+::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+    background-color: rgba(0, 0, 0, .5);
+    -webkit-box-shadow: 0 0 1px rgba(255, 255, 255, .5);
+}
+
+body .ui-inputtext {
+    border: unset;
+}
+
+
+/* body .ui-fileupload .ui-fileupload-buttonbar {
+    padding: 0px 0px 0px 0px;
+} */
+
+body .ui-breadcrumb {
+    border: 0;
+    padding: 0px 0px;
+}
+
+.ui-breadcrumb ul li {
+    display: inline-block;
+    margin: 0;
+}
+
+body .ui-table .ui-table-tbody>tr:nth-child(even) {
+    background-color: #fff !important;
+    color: #000 !important;
+}
+
+body .ui-table .ui-table-tbody>tr:hover {
+    background-color: #f7f7f7 !important;
+    color: #000 !important;
+}
+
+body .ui-table .ui-table-tbody>tr {
+    border-bottom: solid 1px #f1f1f1;
+    padding: 4px;
+}
+
+body .ui-paginator {
+    border: 0;
+    background: #fff;
+    padding: 4px;
+}
+
+body .ui-fileupload .ui-fileupload-buttonbar .ui-button {
+    font-size: 12px;
+}
+
+
+/* .ui-fileupload-files {
+    float: right;
+} */
+
+body .ui-dialog .ui-dialog-titlebar {
+    text-align: left;
+    background: white;
+}
+
+body .ui-dialog {
+    border-radius: 20px;
+}
+
+
+/* .ui-table .ui-paginator-bottom {
+    margin-top: 12px;
+    position: fixed;
+    bottom: 0px;
+    margin: auto;
+    width: 100%;
+    background: #f2f2f2;
+} */
+
+.ui-tooltip-text {
+    width: fit-content;
+}
+
+.row-data-edit {
+    display: none;
+}
+
+.row-data-name:hover .row-data-edit,
+.row-data-name.row-data-edit {
+    display: inline;
+}
+
+.row-data-name:hover .row-data-icon,
+.row-data-name.row-data-icon {
+    display: none;
+}
+
+.ui-tree-container{
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+.ng-star-inserted{
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+
+.ui-breadcrumb ul{
+    justify-content: flex-start!important;
+
+    align-items: center!important;
+
+    display: flex!important;
+}
+
+.p-tree {
+border:none !important;
+}
+
+.p-datatable-resizable .p-datatable-tbody>tr>td, .p-datatable-resizable .p-datatable-tfoot>tr>td, .p-datatable-resizable .p-datatable-thead>tr>th {
+border:none !important;
+}
+
+.p-datatable .p-paginator-bottom {
+
+    border: none;
+    margin-top: 5px;
+    padding: 10px;
+}
+
+.p-fileupload .p-fileupload-buttonbar {
+    display: flex;
+    justify-content: center;
+}
+
+.p-tree .p-tree-container .p-treenode .p-treenode-content .p-treenode-icon {
+    color: #F59E0B !important;
+}
+
+.p-breadcrumb {
+
+    border: none !important;
+    padding: 0px !important;
+}
+
+.p-datatable-resizable .p-datatable-tbody>tr>td, .p-datatable-resizable .p-datatable-tfoot>tr>td, .p-datatable-resizable .p-datatable-thead>tr>th, .p-tree {
+    border: none !important;
+    padding: 0 !important;
+}
