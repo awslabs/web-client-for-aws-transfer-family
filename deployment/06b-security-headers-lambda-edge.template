@@ -18,7 +18,7 @@ Resources:
             reason: "Edge function. Concurrent execution reservation not required for this use case."
     Properties:
       Role: !GetAtt SecurityHeadersLambdaRole.Arn
-      Runtime: nodejs10.x
+      Runtime: nodejs14.x
       Handler: index.handler
       Code:
         ZipFile: !Join
