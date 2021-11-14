@@ -1,3 +1,4 @@
+#!/bin/bash -e
 # Setup env vars
 AWS_PROFILE=$1
 
