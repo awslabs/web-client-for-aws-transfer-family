@@ -1,6 +1,6 @@
 Flask==1.1.2
 Flask-Cors==3.0.8
-Paramiko==2.7.1
+Paramiko==2.10.1
 flask_jwt_extended==3.25.1
 gunicorn==20.0.4
 boto3==1.14.24
