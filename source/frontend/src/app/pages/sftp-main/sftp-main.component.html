@@ -101,7 +101,7 @@
                                               (onUpload)="onUpload($event)"
                                               (uploadHandler)="uploadFile($event,fileUploader)"
                                               [files]="myfiles" [customUpload]="true"
-                                              method="POST" mode="advanced" name="filename">
+                                              method="POST" mode="advanced" name="filename" [multiple] ="true">
                                     <ng-template pTemplate="content">
                                         <div style="border:1px dashed grey;height:100%;position: relative;">
                                            <div style="position: absolute; top: 10%; left: 10%">
@@ -114,6 +114,17 @@
 
                                 </p-fileUpload>
 
+                            </div>
+                            <p-progressBar [ngStyle]="{'visibility':file_uploading==true ? 'visible' : 'hidden'}" mode="indeterminate"></p-progressBar>
+                        </p-dialog>
+                         <!-- Code to upload folder starts-->
+                        <p-dialog [(visible)]="upload_folder_dialog_display" header="Upload Folder" position="top">
+                            <div style="min-width:600px;min-height:400px;">
+                                <input #folderInput class="form-control" type="file" multiple webkitdirectory>
+                                <button (click)="uploadFolder(folderInput.files,folderInput)"
+                                    class="btn btn-success" type="submit">
+                                    Upload Folder
+                                </button>
                             </div>
                             <p-progressBar [ngStyle]="{'visibility':file_uploading==true ? 'visible' : 'hidden'}" mode="indeterminate"></p-progressBar>
                         </p-dialog>
