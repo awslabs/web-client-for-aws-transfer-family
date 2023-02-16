@@ -1,4 +1,4 @@
-Werkzeug==2.0.0
+Werkzeug==2.2.3
 jinja2==3.0.3
 Flask==2.1.0
 Flask-Cors==3.0.9
