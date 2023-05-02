@@ -270,7 +270,7 @@ Resources:
           - "-"
           - - "sftp-web-ui-access-logs"
             - Fn::ImportValue: !Join [':', [!Ref 'VPCResourceStack', 'StackID']]
-      AccessControl: LogDeliveryWrite
+      AccessControl: Private
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:

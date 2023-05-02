@@ -554,7 +554,7 @@ Resources:
       Domain: vpc
   AWSSFTPEndPoint:
     Type: AWS::Transfer::Server
-    Properties :
+    Properties:
       EndpointType: VPC
       EndpointDetails:
         AddressAllocationIds:

@@ -69,7 +69,9 @@ Resources:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
               SSEAlgorithm: 'AES256'
-
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: ObjectWriter
 
   # Configure the bucket as a CloudFront Origin
   ReadPolicy:
@@ -90,7 +92,7 @@ Resources:
             Principal:
               CanonicalUser: !GetAtt CloudFrontOriginAccessIdentity.S3CanonicalUserId
 
-  # Configure Access to CloudFroun
+  # Configure Access to CloudFront
   CloudFrontOriginAccessIdentity:
     Type: 'AWS::CloudFront::CloudFrontOriginAccessIdentity'
     Properties:
