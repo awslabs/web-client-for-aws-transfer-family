@@ -1,3 +1,4 @@
-.history
-deployment/global-s3-assets
-deployment/regional-s3-assets
+.history/
+deployment/global-s3-assets/
+deployment/regional-s3-assets/
+dist/

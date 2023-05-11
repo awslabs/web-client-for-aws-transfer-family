@@ -21,21 +21,14 @@ You may also want to adjust the idle timeout value on the ALB using steps outlin
 3. Allow user execute: `chmod u+x build-dist.sh` and `chmod u+x build-s3-dist.sh`
 4. Run `build-dist.sh`. For example, for nonp `./build-dist.sh thvc-nonp-sftp-web-client-lambda-code thvc-nonp-sftp-web-client v1.0.0`
 5. Run `build-s3-dist.sh`. For example, for nonp `./build-s3-dist.sh thvc-nonp-sftp-web-client-lambda-code thvc-nonp-sftp-web-client v1.0.0`
-6. Create a `.gitignore` in `dist/.gitignore` with the following entries. Please note that this path will only exist after running the scripts above
-
-```
-source/frontend/node_modules/*
-source/frontend/dist/sftp-ng-webui/*
-```
-
-7. Create an S3 bucket, and key prefix. For example, S3Bucket: "thvc-nonp-sftp-web-client-lambda-code", KeyPrefix: "thvc-nonp-sftp-web-client/v1.0.0", i.e. folders, AND the AWS Lambda code zip files must be uploaded into the S3 bucket and folders. For example, thvc-nonp-sftp-web-client-lambda-code/thvc-nonp-sftp-web-client/v1.0.0/<file_name>.zip. The ZIP files will be located in `deployment/regional-s3-assets/lambda`. Please note that this path will only exist after running the scripts above
-8. Create an S3 bucket for the AWS Transfer Family server to use. For example, in nonp "thvc-nonp-sftp"
-9.  Create each stack in AWS Cloudformation from the templates in `dist/deployment`. Please note that this path will only exist after running the scripts above
-10. Please note that the script `06a-add-security-headers.sh` calls the Cloudformation template `06b-security-headers-lambda-edge.template` and creates resources that have to be in AWS region us-east-1. DO NOT create a stack for `06b-security-headers-lambda-edge.template` manually
-11. Create users in the AWS Cognito User Pool console. You need to ensure each user is: Email verified: Yes, Confirmation status: Confirmed, and Status: Enabled. Please see `07b-cognito-seed.sh` for examples on how to do this
-12. Create an ACM certificate, for example, Domain: sftpui.stg.virtualcare.telushealth.com, in us-east-1, AND that you have clicked the "Create records in Route 53" button and that the certificate is Status: Issued
-13. The Cloudformation templates will create the ACM certificate, for example, Domain: sftpapi.stg.virtualcare.telushealth.com, needed for the load balancer, BUT again you have clicked the "Create records in Route 53" button and ensure that the certificate is Status: Issued
-14. Create a DynamoDB item, in the table created in `03-sftp-endpoint.template` for each Cognito user that maps their username to the AWS Transfer Family server bucket and user folder created. Here is an example JSON DynamoDB item that needs to be created for each user:
+6. Create an S3 bucket, and key prefix. For example, S3Bucket: "thvc-nonp-sftp-web-client-lambda-code-ca-central-1", KeyPrefix: "thvc-nonp-sftp-web-client/v1.0.0/lambda/", i.e. folders, AND the AWS Lambda code zip files must be uploaded into the S3 bucket and folders. For example, thvc-nonp-sftp-web-client-lambda-code/thvc-nonp-sftp-web-client/v1.0.0/lambda/<file_name>.zip. The ZIP files will be located in `deployment/regional-s3-assets/lambda`. Please note that this path will only exist after running the scripts above
+7. Create an S3 bucket for the AWS Transfer Family server to use. For example, in nonp "thvc-nonp-sftp"
+8. Create an ACM certificate, for example, Domain: sftpapi.stg.virtualcare.telushealth.com, in ca-central-1, needed for the load balancer, AND click the "Create records in Route 53" button and that the certificate is Status: Issued
+9. Create an ACM certificate, for example, Domain: sftpui.stg.virtualcare.telushealth.com, in us-east-1, BUT again you have clicked the "Create records in Route 53" button and ensure that the certificate is Status: Issued
+10. Create each stack in AWS Cloudformation from the templates in `dist/deployment`. Please note that this path will only exist after running the scripts above
+11. Please note that the script `06a-add-security-headers.sh` calls the Cloudformation template `06b-security-headers-lambda-edge.template` and creates resources that have to be in AWS region us-east-1. DO NOT create a stack for `06b-security-headers-lambda-edge.template` manually
+12. Create users in the AWS Cognito User Pool console. You need to ensure each user is: Email verified: Yes, Confirmation status: Confirmed, and Status: Enabled. Please see `07b-cognito-seed.sh` for examples on how to do this
+13. Create a DynamoDB item, in the table created in `03-sftp-endpoint.template` for each Cognito user that maps their username to the AWS Transfer Family server bucket and user folder created. Here is an example JSON DynamoDB item that needs to be created for each user:
 
 ```
 {
@@ -48,7 +41,7 @@ source/frontend/dist/sftp-ng-webui/*
 }
 ```
 
-15. Now you should be able to login where you configured your UI domain. For example, `https://sftpui.stg.virtualcare.telushealth.com`
+14. Now you should be able to login where you configured your UI domain. For example, `https://sftpui.stg.virtualcare.telushealth.com`
 
 ***
 
