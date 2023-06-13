@@ -32,7 +32,7 @@ Resources:
             - "   headers['x-xss-protection'] = [{key: 'X-XSS-Protection', value: '1; mode=block'}];"
             - "   headers['x-content-type-options'] = [{key: 'X-Content-Type-Options', value: 'nosniff'}];"
             - !Sub |
-              headers['content-security-policy'] = [{key: 'Content-Security-Policy', value: "default-src 'self' *.${DomainName}; img-src * 'self' *.${DomainName} data:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"}];
+              headers['content-security-policy'] = [{key: 'Content-Security-Policy', value: "default-src 'self' *.${DomainName}; img-src * 'self' *.${DomainName} data:; script-src 'self' *.${DomainName}; style-src 'self' *.${DomainName};"}];
             - "   callback(null, response);"
             - "};"
 
