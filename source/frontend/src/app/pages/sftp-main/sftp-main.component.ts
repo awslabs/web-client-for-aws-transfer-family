@@ -260,7 +260,8 @@ export class SftpMainComponent implements OnInit {
     this.cols = [
       { field: 'name', header: 'File Name', filterMatchMode: 'custom' },
       { field: 'type', header: 'File Type', filterMatchMode: 'custom' },
-      { field: 'size', header: 'File Size', filterMatchMode: 'custom' }
+      { field: 'size', header: 'File Size', filterMatchMode: 'custom' },
+      { field: 'last_modified_on', header: 'Last Modified', filterMatchMode: 'custom' }
     ];
 
     this.items = [
