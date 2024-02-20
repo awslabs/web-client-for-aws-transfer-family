@@ -32,10 +32,9 @@ resp=$(aws cognito-idp admin-update-user-attributes \
 --profile $AWS_PROFILE)
 
 #Reset the password
-# Seems like a bug with this command: https://github.com/aws/aws-cli/issues/5675
-aws cognito-idp admin-set-user-password \
+resp=$(aws cognito-idp admin-set-user-password \
 --user-pool-id $COGNITO_USERPOOL_ID \
 --username $COGNITO_USER_USERNAME \
 --password $COGNITO_USER_PASSWD \
 --permanent \
---profile $AWS_PROFILE
+--profile $AWS_PROFILE)

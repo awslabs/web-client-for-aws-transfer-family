@@ -94,18 +94,16 @@ def auth_with_cognito(uname, pas, stack_id):
   return resp, None
 
 def get_secret_hash(user_name, CLIENT_ID, CLIENT_SECRET):
-  msg = user_name + CLIENT_ID
-  dig = hmac.new(str(CLIENT_SECRET).encode('utf-8'),
-  msg = str(msg).encode('utf-8'), digestmod=hashlib.sha256).digest()
-  d2 = base64.b64encode(dig).decode()
-  return d2
+  message = bytes(user_name + CLIENT_ID, 'utf-8')
+  key = bytes(CLIENT_SECRET, 'utf-8')
+  secret_hash = base64.b64encode(hmac.new(key, message, digestmod=hashlib.sha256).digest()).decode()
+  return secret_hash
 
 #Get user mapping
 def get_user_directory_mapping(uname):
   try:
     response = table.get_item(Key={'username': uname})
     directoryMap = response['Item'].get("directoryMap")
-    directoryMap = json.dumps(directoryMap)
     return directoryMap
   except Exception as e:
     return None, e.__str__()

@@ -6,10 +6,10 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text --profi
 # INSTRUCTIONS - update with target region
 AWS_REGION=$(aws configure get region --profile $AWS_PROFILE)
 
-# Replace with your R53 Alias pointing to your ALB
+# Replace with your R53 Alias pointing to your Cloudfront Distribution
 COMPANY_DOMAIN='<enter_your_domain>'        # example mycompanydomain.com
 CLOUDFRONT_CNAME='<enter_cloudfront_cname>' # example ui.mycompanydomain.com
-ECR_REPO_NAME='<enter_ecr_repo_name>' # example sftp-backend-0a635743
+ECR_REPO_NAME='<enter_ecr_repo_name>'       # example sftp-backend-0a635743
 
 # Build the image from the source directory
 pushd ../source/backend
