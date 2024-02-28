@@ -60,6 +60,7 @@ export class SftpMainComponent implements OnInit {
   login_process = false
   direction: string = 'horizontal';
   upload_dialog_display: boolean = false;
+  upload_folder_dialog_display: boolean = false;
   connect_dialog_display: boolean = false;
   numfiles_upload = 0;
 
@@ -133,6 +134,9 @@ export class SftpMainComponent implements OnInit {
     this.upload_dialog_display = true;
   }
 
+  showUploadFolderDialog() {
+    this.upload_folder_dialog_display = true;
+  }
  
 
   showConnectPage() {
@@ -197,6 +201,9 @@ export class SftpMainComponent implements OnInit {
     });
   }
 
+  /*
+   *     Changing default timeout from 5000 to 43200000 so that users don't logout until 24 hours.
+   */
   timeout() {
     setTimeout(() => {
       this.sftpService.isConnected().subscribe((result) => {
@@ -211,7 +218,7 @@ export class SftpMainComponent implements OnInit {
           this.health_ok = false;
         });
 
-    }, 5000);
+    }, 43200000);
   }
 
   ngOnInit() {
@@ -470,39 +477,42 @@ export class SftpMainComponent implements OnInit {
       return;
     }
 
-    let fileToUpload = event.files[0];
-    let formData = new FormData();
-    formData.append('filetoupload', fileToUpload);
-    formData.append('file_path', this.currentFolderPath);
-    formData.append('file_name', fileToUpload.name);
+    for (let i = 0; i < event.files.length; i++) {
+      let fileToUpload = event.files[i];
+      let formData = new FormData();
+      formData.append('filetoupload', fileToUpload);
+      formData.append('file_path', this.currentFolderPath);
+      formData.append('file_name', fileToUpload.name);
 
-    fileUploader.clear();
-    this.file_uploading = true;
-    this.messageService.clear();
-    this.numfiles_upload = this.numfiles_upload+1;
-    this.messageService.add({ severity: 'info', summary: 'File Upload:', detail: "Uploading "+ this.numfiles_upload+" files. Please wait ... " });
-    this.sftpService.uploadFile(formData).subscribe(res => {
-      this.file_uploading = false;
-      this.onFolderPathSelect({ 'node': this.selectedTreeNode });
       fileUploader.clear();
-      this.upload_dialog_display = false;
-      this.numfiles_upload = this.numfiles_upload-1;
-      if(this.numfiles_upload <=0){
-        this.messageService.clear();
-        this.messageEmit('success', 'File Upload:', 'Your file were successfully uploaded.', 2000);
-      }else{
-        this.messageService.clear();
-        this.messageService.add({ severity: 'info', summary: 'File Upload:', detail: "Uploading "+ this.numfiles_upload+" files. Please wait ... " });
-      }
-    },
-    err => {
-      fileUploader.clear();
-      this.upload_dialog_display = false;
-      this.messageEmit('error', 'Error uploading file. ', err.error.message, null);
+      this.file_uploading = true;
       this.messageService.clear();
-      this.numfiles_upload =0;
-     }
-    );
+      this.numfiles_upload = this.numfiles_upload+1;
+      this.messageService.add({ severity: 'info', summary: 'File Upload:', detail: "Uploading "+ this.numfiles_upload+" files. Please wait ... " });
+      this.sftpService.uploadFile(formData).subscribe(res => {
+        this.file_uploading = false;
+        this.onFolderPathSelect({ 'node': this.selectedTreeNode });
+        fileUploader.clear();
+        this.upload_dialog_display = false;
+        this.numfiles_upload = this.numfiles_upload-1;
+        if(this.numfiles_upload <=0){
+          this.messageService.clear();
+          this.messageEmit('success', 'File Upload:', 'Your file were successfully uploaded.', 2000);
+        }else{
+          this.messageService.clear();
+          this.messageService.add({ severity: 'info', summary: 'File Upload:', detail: "Uploading "+ this.numfiles_upload+" files. Please wait ... " });
+        }
+      },
+      err => {
+        fileUploader.clear();
+        this.upload_dialog_display = false;
+        this.messageEmit('error', 'Error uploading file. ', err.error.message, null);
+        this.messageService.clear();
+        this.numfiles_upload =0;
+      }
+      );
+    }
+    fileUploader.value = null;     
 
   }
 
@@ -512,6 +522,50 @@ export class SftpMainComponent implements OnInit {
     }
   }
 
+  uploadFolder(files,folderInput) {
+    for (const file of files) {
+      this.uploadedFiles.push(file);
+    }
+    for (let i = 0; i < files.length; i++) {
+      let fileToUpload = files[i];
+      let splitPath = fileToUpload.webkitRelativePath.split('/');
+      let path = splitPath
+        .slice(0, splitPath.length - 1)
+        .join('/');
+        path = this.currentFolderPath + '/' +  path
+      let formData = new FormData();
+      formData.append('filetoupload', fileToUpload);
+      formData.append('file_path', path);
+      formData.append('file_name', fileToUpload.name);
+      this.file_uploading = true;
+      this.messageService.clear();
+      this.numfiles_upload = this.numfiles_upload+1;
+      this.messageService.add({ severity: 'info', summary: 'File Upload:', detail: "Uploading "+ this.numfiles_upload+" files. Please wait ... " });
+      this.sftpService.uploadFile(formData).subscribe(res => {
+        this.file_uploading = false;
+        this.onFolderPathSelect({ 'node': this.selectedTreeNode });
+        this.upload_dialog_display = false;
+        this.upload_folder_dialog_display = false;
+        this.numfiles_upload = this.numfiles_upload-1;
+        if(this.numfiles_upload <=0){
+          this.messageService.clear();
+          this.messageEmit('success', 'File Upload:', 'Your file were successfully uploaded.', 2000);
+        }else{
+          this.messageService.clear();
+          this.messageService.add({ severity: 'info', summary: 'File Upload:', detail: "Uploading "+ this.numfiles_upload+" files. Please wait ... " });
+        }
+      },
+      err => {
+        this.upload_dialog_display = false;
+        this.upload_folder_dialog_display = false;
+        this.messageEmit('error', 'Error uploading file. ', err.error.message, null);
+        this.messageService.clear();
+        this.numfiles_upload =0;
+      }
+      );
+    }
+    folderInput.value = null;    
+  }
  
   applyFilterGlobal($event, stringVal) {
     this.dt.filterGlobal(($event.target as HTMLInputElement).value, 'contains');
